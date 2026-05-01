@@ -24,8 +24,10 @@ export type PluginSceneRefs = {
     camera: PluginCamera | null;
 };
 
-export interface PluginContext extends PluginSceneRefs {
-    readonly host: PluginHost;
+export type PluginRuntimeContext = PluginSceneRefs;
+
+export interface PluginContext extends PluginRuntimeContext {
+    readonly runtime: PluginRuntimeContext;
 }
 
 export type SceneHookContext = PluginContext;
@@ -88,12 +90,27 @@ export interface EffectPlugin {
 
 export type Plugin = ScenePlugin | AssetPlugin | EffectPlugin;
 
+export type PluginRegistrationResult =
+    | {
+        readonly ok: true;
+    }
+    | {
+        readonly ok: false;
+        readonly reason: "duplicate-id";
+        readonly pluginId: string;
+    };
+
 export interface PluginHost {
     readonly scene: Scene | null;
     readonly engine: PluginEngine | null;
     readonly camera: PluginCamera | null;
     readonly plugins: readonly Plugin[];
-    registerPlugin(plugin: Plugin): void;
+    /**
+     * Registers a plugin if its id is unique.
+     *
+     * Duplicate ids are rejected explicitly and do not replace the existing plugin.
+     */
+    registerPlugin(plugin: Plugin): PluginRegistrationResult;
     unregisterPlugin(pluginId: string): boolean;
     emitSceneReady(context?: Partial<SceneHookContext>): void;
     emitBeforeRender(context?: Partial<RenderHookContext>): void;
