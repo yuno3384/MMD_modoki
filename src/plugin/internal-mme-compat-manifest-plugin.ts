@@ -61,6 +61,7 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         registeredFiles.clear();
         lastPickerWarnings = [];
         lastPickerAcceptedCount = 0;
+        fallbackController.setEnabled(false);
         fallbackController.clearPreview();
         fallbackController.clearApplyPlan();
         rerenderPanels();
@@ -168,9 +169,21 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         const previewCheckbox = document.createElement("input");
         previewCheckbox.type = "checkbox";
         previewCheckbox.checked = controllerState.enabled;
-        previewCheckbox.disabled = true;
+        previewCheckbox.addEventListener("change", () => {
+            fallbackController.setMode("preview");
+            if (previewCheckbox.checked) {
+                fallbackController.setEnabled(true);
+                if (manifest) {
+                    fallbackController.buildPreviewPlan(buildPreviewInputsFromManifest(manifest), { manifest });
+                }
+            } else {
+                fallbackController.setEnabled(false);
+                fallbackController.clearPreview();
+            }
+            rerenderPanels();
+        });
         previewToggle.appendChild(previewCheckbox);
-        previewToggle.appendChild(document.createTextNode("Enable Preview (disabled by default)"));
+        previewToggle.appendChild(document.createTextNode("Enable Dry-Run Preview (diagnostic only)"));
 
         const modeSelect = document.createElement("select");
         modeSelect.disabled = true;
@@ -202,18 +215,12 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
             previewNotice.style.fontSize = "12px";
             previewNotice.style.opacity = "0.75";
             previewNotice.textContent = controllerState.enabled
-                ? "Dry-run diagnostic preview. No fallback materials are applied to scene meshes."
+                ? "Dry-run diagnostic preview. No fallback materials are applied to scene meshes or materials."
                 : "Dry-run diagnostic preview is disabled by default. No analysis/planning preview is being computed.";
             summary.appendChild(previewNotice);
 
             if (controllerState.enabled) {
-                const previewPlan = fallbackController.buildPreviewPlan(parsedEffects.map((effect) => ({
-                    effectId: effect.path,
-                    effect,
-                    targetName: effect.path.split("/").pop() ?? effect.path,
-                    materialName: effect.path.split("/").pop() ?? effect.path,
-                    sourcePath: effect.path,
-                })), { manifest });
+                const previewPlan = fallbackController.buildPreviewPlan(buildPreviewInputsFromManifest(manifest), { manifest });
                 const parsedSummary = document.createElement("pre");
                 parsedSummary.textContent = JSON.stringify(previewPlan.map((entry) => ({
                     path: entry.effectId,
@@ -413,6 +420,16 @@ export async function registerPickedMmeFiles(params: {
         rejectedCount,
         warnings,
     };
+}
+
+function buildPreviewInputsFromManifest(manifest: MMEManifest) {
+    return Object.values(manifest.parsedEffects).map((effect) => ({
+        effectId: effect.path,
+        effect,
+        targetName: effect.path.split("/").pop() ?? effect.path,
+        materialName: effect.path.split("/").pop() ?? effect.path,
+        sourcePath: effect.path,
+    }));
 }
 
 function appendSummaryRow(container: HTMLElement, label: string, value: string): void {

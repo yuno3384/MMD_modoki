@@ -65,6 +65,57 @@ technique Post {
         expect(previewPlan[0].factoryStatus).toBe("unsupported");
     });
 
+    it("builds preview output when explicitly enabled in preview mode", () => {
+        const controller = new MmeFallbackController();
+        controller.setMode("preview");
+        controller.setEnabled(true);
+
+        const previewPlan = controller.buildPreviewPlan([
+            {
+                effectId: "basic",
+                materialName: "mat_body",
+                effect: parseMmeEffectFile({
+                    path: "basic.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+        ]);
+
+        expect(previewPlan).toHaveLength(1);
+        expect(controller.getState()).toMatchObject({
+            enabled: true,
+            mode: "preview",
+        });
+    });
+
+    it("disabling preview clears preview state without mutating input", () => {
+        const controller = new MmeFallbackController();
+        const input = {
+            effectId: "basic",
+            targetName: "body",
+            materialName: "mat_body",
+            effect: parseMmeEffectFile({
+                path: "basic.fx",
+                kind: "fx",
+                text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+            }),
+        };
+
+        controller.setEnabled(true);
+        expect(controller.buildPreviewPlan([input])).toHaveLength(1);
+
+        controller.setEnabled(false);
+
+        expect(controller.getState()).toMatchObject({
+            enabled: false,
+            plannedTargets: [],
+            activeTargets: [],
+        });
+        expect(input.targetName).toBe("body");
+        expect(input.materialName).toBe("mat_body");
+    });
+
     it("guards apply path unless explicitly enabled and switched to apply mode", () => {
         const controller = new MmeFallbackController();
 
