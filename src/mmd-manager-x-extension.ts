@@ -12,7 +12,10 @@ import { Material } from "@babylonjs/core/Materials/material";
 import { MultiMaterial } from "@babylonjs/core/Materials/multiMaterial";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { MmdManager } from "./mmd-manager";
-import { collectAccessoryMaterialTargets as collectPluginAccessoryMaterialTargets } from "./plugin/material-targets";
+import {
+    collectAccessoryMaterialTargets as collectPluginAccessoryMaterialTargets,
+    type AccessoryMaterialEffectTarget,
+} from "./plugin/material-targets";
 import { applyWgslShaderPresetToMaterials } from "./scene/material-shader-service";
 import { loadXIntoScene } from "./x-file-loader";
 import type { ProjectSerializedAccessoryTransformTrack } from "./types";
@@ -64,6 +67,7 @@ declare module "./mmd-manager" {
         setAccessoryTransformKeyframes(index: number, track: ProjectSerializedAccessoryTransformTrack | null): boolean;
         getModelBoneNames(modelIndex: number): string[];
         getAccessoryMeshes(): AbstractMesh[];
+        getAccessoryMaterialTargets(): AccessoryMaterialEffectTarget[];
     }
 }
 
@@ -1123,6 +1127,7 @@ const mmdManagerProto = MmdManager.prototype as unknown as {
     setAccessoryTransformKeyframes?: (index: number, track: ProjectSerializedAccessoryTransformTrack | null) => boolean;
     getModelBoneNames?: (modelIndex: number) => string[];
     getAccessoryMeshes?: () => AbstractMesh[];
+    getAccessoryMaterialTargets?: () => AccessoryMaterialEffectTarget[];
 };
 
 if (!mmdManagerProto.loadX) {
@@ -1293,6 +1298,20 @@ if (!mmdManagerProto.getAccessoryMeshes) {
     mmdManagerProto.getAccessoryMeshes = function(): AbstractMesh[] {
         const entries = getAccessoryEntries(this as unknown as object);
         return entries.flatMap((entry) => entry.meshes);
+    };
+}
+
+if (!mmdManagerProto.getAccessoryMaterialTargets) {
+    mmdManagerProto.getAccessoryMaterialTargets = function(): AccessoryMaterialEffectTarget[] {
+        const entries = getAccessoryEntries(this as unknown as object);
+        return entries.flatMap((entry, index) => collectPluginAccessoryMaterialTargets({
+            accessoryIndex: index,
+            accessoryName: entry.name,
+            accessoryKind: entry.kind,
+            sourcePath: entry.path,
+            rootNode: entry.root,
+            meshes: entry.meshes,
+        }));
     };
 }
 

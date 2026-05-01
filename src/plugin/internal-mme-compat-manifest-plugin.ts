@@ -1,6 +1,10 @@
 import type { ScenePlugin } from "./plugin-types";
 import { pluginUiRegistry } from "./ui-registry";
-import { MmeFallbackController, type MmeFallbackControllerState } from "./mme-fallback-controller";
+import {
+    MmeFallbackController,
+    type MmeFallbackControllerState,
+    type MmeFallbackTargetCandidate,
+} from "./mme-fallback-controller";
 import {
     createMmeManifest,
     getMmeFileKind,
@@ -8,6 +12,7 @@ import {
     type MMEManifest,
     type MmeCompatFileEntry,
 } from "./mme-compat-manifest";
+import type { MaterialEffectTarget } from "./material-targets";
 
 export type MmeFileRegistrationResult = {
     ok: boolean;
@@ -38,6 +43,10 @@ export type InternalMmeCompatManifestPlugin = ScenePlugin & {
     clearMmeManifest(): void;
 };
 
+type InternalMmeCompatManifestPluginOptions = {
+    getSceneMaterialTargets?: () => readonly MaterialEffectTarget[];
+};
+
 /**
  * Internal MME compatibility skeleton.
  *
@@ -50,7 +59,9 @@ export type InternalMmeCompatManifestPlugin = ScenePlugin & {
  * - asset loading paths will call discoverManifest(...) when an accessory or
  *   effect bundle is selected/imported
  */
-export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManifestPlugin {
+export function createInternalMmeCompatManifestPlugin(
+    options: InternalMmeCompatManifestPluginOptions = {},
+): InternalMmeCompatManifestPlugin {
     let manifest: MMEManifest | null = null;
     const registeredFiles = new Map<string, MmeCompatFileEntry>();
     const mountedContainers = new Set<HTMLElement>();
@@ -234,6 +245,10 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
 
             if (controllerState.enabled) {
                 const previewPlan = fallbackController.buildPreviewPlan(buildPreviewInputsFromManifest(manifest), { manifest });
+                const targetCandidates = fallbackController.buildTargetCandidateView(
+                    options.getSceneMaterialTargets?.() ?? [],
+                    previewPlan,
+                );
                 const parsedSummary = document.createElement("pre");
                 parsedSummary.textContent = JSON.stringify(previewPlan.map((entry) => ({
                     path: entry.effectId,
@@ -255,6 +270,28 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
                 parsedSummary.style.background = "rgba(15, 23, 42, 0.24)";
                 parsedSummary.style.borderRadius = "8px";
                 summary.appendChild(parsedSummary);
+
+                const candidateNotice = document.createElement("div");
+                candidateNotice.style.marginTop = "8px";
+                candidateNotice.style.fontSize = "12px";
+                candidateNotice.style.opacity = "0.75";
+                candidateNotice.textContent = "Scene material target candidates. Read-only dry-run view only; no fallback material is applied.";
+                summary.appendChild(candidateNotice);
+
+                appendSummaryRow(summary, "Scene Target Candidates", String(targetCandidates.length));
+
+                if (targetCandidates.length > 0) {
+                    const candidateSummary = document.createElement("pre");
+                    candidateSummary.textContent = JSON.stringify(summarizeTargetCandidates(targetCandidates), null, 2);
+                    candidateSummary.style.margin = "8px 0 0";
+                    candidateSummary.style.padding = "8px";
+                    candidateSummary.style.maxHeight = "180px";
+                    candidateSummary.style.overflow = "auto";
+                    candidateSummary.style.whiteSpace = "pre-wrap";
+                    candidateSummary.style.background = "rgba(15, 23, 42, 0.24)";
+                    candidateSummary.style.borderRadius = "8px";
+                    summary.appendChild(candidateSummary);
+                }
             }
         }
 
@@ -453,6 +490,24 @@ function buildPreviewInputsFromManifest(manifest: MMEManifest) {
         targetName: effect.path.split("/").pop() ?? effect.path,
         materialName: effect.path.split("/").pop() ?? effect.path,
         sourcePath: effect.path,
+    }));
+}
+
+function summarizeTargetCandidates(candidates: readonly MmeFallbackTargetCandidate[]) {
+    return candidates.map((candidate) => ({
+        targetId: candidate.targetId,
+        effectId: candidate.effectId,
+        targetKind: candidate.targetKind,
+        ownerName: candidate.ownerName,
+        meshName: candidate.meshName,
+        materialName: candidate.materialName,
+        sourcePath: candidate.sourcePath,
+        preset: candidate.recommendedFallbackPreset,
+        confidence: Number(candidate.confidence.toFixed(2)),
+        status: candidate.status,
+        blockedReasons: candidate.blockedReasons,
+        matchingPolicy: candidate.matchingPolicy,
+        warnings: candidate.warnings,
     }));
 }
 

@@ -1,6 +1,7 @@
 import type { Material } from "@babylonjs/core/Materials/material";
 import type { Scene } from "@babylonjs/core/scene";
 
+import type { MaterialEffectTarget } from "./material-targets";
 import { analyzeMmeEffectIR, type MmeEffectAnalysis } from "./mme-effect-mapper";
 import {
     createMmeFallbackMaterial,
@@ -85,6 +86,24 @@ export type MmeFallbackApplyTransaction = {
     readonly status: "planned" | "applied" | "reverted" | "failed";
 };
 
+export type MmeFallbackTargetCandidateStatus = "global-effect-candidate" | "unsupported" | "unmatched";
+
+export type MmeFallbackTargetCandidate = {
+    readonly targetId: string;
+    readonly effectId: string | null;
+    readonly targetKind: MaterialEffectTarget["kind"];
+    readonly ownerName: string | null;
+    readonly meshName: string;
+    readonly materialName: string;
+    readonly sourcePath: string | null;
+    readonly recommendedFallbackPreset: MmeFallbackPlan["preset"] | "none";
+    readonly confidence: number;
+    readonly status: MmeFallbackTargetCandidateStatus;
+    readonly warnings: readonly string[];
+    readonly blockedReasons: readonly string[];
+    readonly matchingPolicy: "single-global-effect" | "multi-global-effect" | "unmatched";
+};
+
 export class MmeFallbackController {
     private enabled = false;
     private mode: MmeFallbackControllerMode = "preview";
@@ -92,6 +111,7 @@ export class MmeFallbackController {
     private selectedEffectId: string | null = null;
     private activeTargets: string[] = [];
     private plannedTargets: MmeFallbackPreviewPlanItem[] = [];
+    private targetCandidates: MmeFallbackTargetCandidate[] = [];
     private applyPlan: MmeFallbackApplyTransaction | null = null;
     private readonly ownedFactoryResults = new Set<MmeFallbackMaterialFactoryResult>();
 
@@ -159,6 +179,75 @@ export class MmeFallbackController {
         this.selectedEffectId = null;
         this.activeTargets = [];
         this.plannedTargets = [];
+        this.targetCandidates = [];
+    }
+
+    /**
+     * Candidate matching policy:
+     * - this scaffold does not yet have a reliable per-material effect binding
+     * - if preview effects exist, targets are shown as global effect candidates
+     * - if multiple effects exist, candidates stay duplicated per effect so the
+     *   UI does not overclaim a single exact assignment
+     * - if no preview effect exists, targets are labeled unmatched
+     */
+    public buildTargetCandidateView(
+        targets: readonly MaterialEffectTarget[],
+        previewPlan: readonly MmeFallbackPreviewPlanItem[] = this.plannedTargets,
+    ): readonly MmeFallbackTargetCandidate[] {
+        if (targets.length === 0) {
+            this.targetCandidates = [];
+            return this.targetCandidates;
+        }
+
+        if (previewPlan.length === 0) {
+            this.targetCandidates = targets.map((target) => ({
+                targetId: createTargetCandidateId(target),
+                effectId: null,
+                targetKind: target.kind,
+                ownerName: getTargetOwnerName(target),
+                meshName: target.meshName,
+                materialName: target.materialName,
+                sourcePath: target.sourcePath,
+                recommendedFallbackPreset: "none",
+                confidence: 0,
+                status: "unmatched",
+                warnings: ["No fallback preview effect is available for this scene material target."],
+                blockedReasons: ["preview-unavailable"],
+                matchingPolicy: "unmatched",
+            }));
+            return this.targetCandidates;
+        }
+
+        const matchingPolicy = previewPlan.length === 1 ? "single-global-effect" : "multi-global-effect";
+        this.targetCandidates = targets.flatMap((target) => previewPlan.map((entry) => ({
+            targetId: createTargetCandidateId(target),
+            effectId: entry.effectId,
+            targetKind: target.kind,
+            ownerName: getTargetOwnerName(target),
+            meshName: target.meshName,
+            materialName: target.materialName,
+            sourcePath: target.sourcePath,
+            recommendedFallbackPreset: entry.preset,
+            confidence: entry.fallbackConfidence,
+            status: entry.preset === "unsupported" || entry.analysisStatus === "unsupported" || entry.factoryStatus === "unsupported"
+                ? "unsupported"
+                : "global-effect-candidate",
+            warnings: [
+                `Read-only dry-run candidate. No direct material/effect binding is implemented yet; this effect is shown as a global candidate for the current scene target.`,
+                ...entry.warnings,
+            ],
+            blockedReasons: [...entry.blockedByUnsupportedFeatures],
+            matchingPolicy,
+        })));
+        return this.targetCandidates;
+    }
+
+    public getTargetCandidates(): readonly MmeFallbackTargetCandidate[] {
+        return this.targetCandidates;
+    }
+
+    public clearTargetCandidates(): void {
+        this.targetCandidates = [];
     }
 
     public planApply(
@@ -262,6 +351,7 @@ export class MmeFallbackController {
         this.setEnabled(false);
         this.setExperimentalApplyEnabled(false);
         this.clearApplyPlan();
+        this.clearTargetCandidates();
         this.disposeOwnedFactoryResults();
     }
 
@@ -317,4 +407,21 @@ export class MmeFallbackController {
     private createTransactionId(): string {
         return `mme-fallback-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     }
+}
+
+function getTargetOwnerName(target: MaterialEffectTarget): string | null {
+    return target.kind === "model"
+        ? (target.modelName ?? target.name)
+        : (target.accessoryName ?? target.name);
+}
+
+function createTargetCandidateId(target: MaterialEffectTarget): string {
+    const slot = target.materialSlotIndex === null ? "single" : target.materialSlotIndex.toString(10);
+    return [
+        target.kind,
+        target.sourcePath ?? "unknown-source",
+        target.meshName,
+        target.materialName,
+        slot,
+    ].join("::");
 }

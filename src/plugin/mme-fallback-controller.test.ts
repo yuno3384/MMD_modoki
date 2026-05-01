@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { MmeFallbackController } from "./mme-fallback-controller";
 import { parseMmeEffectFile } from "./mme-fx-parser";
+import type { MaterialEffectTarget } from "./material-targets";
 
 describe("MmeFallbackController", () => {
     it("starts disabled in preview mode", () => {
@@ -190,6 +191,69 @@ technique Post {
         });
     });
 
+    it("builds read-only scene material target candidates from preview output", () => {
+        const controller = new MmeFallbackController();
+        controller.setMode("preview");
+        controller.setEnabled(true);
+
+        const previewPlan = controller.buildPreviewPlan([
+            {
+                effectId: "basic",
+                materialName: "mat_body",
+                effect: parseMmeEffectFile({
+                    path: "basic.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+        ]);
+
+        const meshMaterialTarget = createMockMaterialTarget({
+            kind: "model",
+            ownerName: "Miku",
+            meshName: "BodyMesh",
+            materialName: "BodyMaterial",
+            sourcePath: "model.pmx",
+        });
+
+        const candidates = controller.buildTargetCandidateView([meshMaterialTarget], previewPlan);
+
+        expect(candidates).toHaveLength(1);
+        expect(candidates[0]).toMatchObject({
+            effectId: "basic",
+            targetKind: "model",
+            ownerName: "Miku",
+            meshName: "BodyMesh",
+            materialName: "BodyMaterial",
+            recommendedFallbackPreset: "basicToon",
+            matchingPolicy: "single-global-effect",
+        });
+        expect(meshMaterialTarget.materialName).toBe("BodyMaterial");
+        expect(controller.getTargetCandidates()).toHaveLength(1);
+    });
+
+    it("labels candidates conservatively as unmatched when no preview effect exists", () => {
+        const controller = new MmeFallbackController();
+        const accessoryTarget = createMockMaterialTarget({
+            kind: "accessory",
+            ownerName: "RayAccessory",
+            meshName: "AccessoryMesh",
+            materialName: "AccessoryMaterial",
+            sourcePath: "ray.x",
+        });
+
+        const candidates = controller.buildTargetCandidateView([accessoryTarget], []);
+
+        expect(candidates).toHaveLength(1);
+        expect(candidates[0]).toMatchObject({
+            effectId: null,
+            targetKind: "accessory",
+            recommendedFallbackPreset: "none",
+            status: "unmatched",
+            matchingPolicy: "unmatched",
+        });
+    });
+
     it("planApply creates a planned transaction without mutating preview state", () => {
         const controller = new MmeFallbackController();
         const originalMaterial = { name: "original_mat" } as unknown as import("@babylonjs/core/Materials/material").Material;
@@ -290,6 +354,15 @@ technique Post {
                 }),
             },
         ]);
+        controller.buildTargetCandidateView([
+            createMockMaterialTarget({
+                kind: "model",
+                ownerName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                sourcePath: "model.pmx",
+            }),
+        ], controller.getState().plannedTargets);
 
         controller.dispose();
 
@@ -301,5 +374,48 @@ technique Post {
             plannedTargets: [],
         });
         expect(controller.getApplyPlan()).toBeNull();
+        expect(controller.getTargetCandidates()).toEqual([]);
     });
 });
+
+function createMockMaterialTarget(params: {
+    kind: MaterialEffectTarget["kind"];
+    ownerName: string;
+    meshName: string;
+    materialName: string;
+    sourcePath: string;
+}): MaterialEffectTarget {
+    const mesh = { name: params.meshName, material: null } as unknown as import("@babylonjs/core/Meshes/abstractMesh").AbstractMesh;
+    const material = { name: params.materialName } as unknown as import("@babylonjs/core/Materials/material").Material;
+
+    if (params.kind === "model") {
+        return {
+            kind: "model",
+            name: params.ownerName,
+            modelIndex: 0,
+            modelName: params.ownerName,
+            sourcePath: params.sourcePath,
+            rootNode: null,
+            mesh,
+            material,
+            materialName: params.materialName,
+            meshName: params.meshName,
+            materialSlotIndex: null,
+        };
+    }
+
+    return {
+        kind: "accessory",
+        name: params.ownerName,
+        accessoryIndex: 0,
+        accessoryName: params.ownerName,
+        accessoryKind: "x",
+        sourcePath: params.sourcePath,
+        rootNode: null,
+        mesh,
+        material,
+        materialName: params.materialName,
+        meshName: params.meshName,
+        materialSlotIndex: null,
+    };
+}
