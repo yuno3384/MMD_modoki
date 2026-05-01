@@ -8,6 +8,7 @@ import { PmdReader } from "babylon-mmd/esm/Loader/Parser/pmdReader";
 import { PmxReader } from "babylon-mmd/esm/Loader/Parser/pmxReader";
 import { MmdStandardMaterialProxy } from "babylon-mmd/esm/Runtime/mmdStandardMaterialProxy";
 import type { MmdMesh } from "babylon-mmd/esm/Runtime/mmdMesh";
+import { collectModelMaterialTargets } from "../plugin/material-targets";
 import { ensureMaterialShaderDefaults } from "../scene/material-shader-service";
 
 const PMX_BONE_FLAG_VISIBLE = 0x0008;
@@ -832,13 +833,27 @@ export async function loadPMX(host: any, filePath: string): Promise<ModelInfo | 
         }
 
         host.onSceneModelLoaded?.(modelInfo, host.sceneModels.length, activateAsCurrent);
+        const materialTargets = collectModelMaterialTargets({
+            modelIndex: host.sceneModels.length - 1,
+            modelName: modelInfo.name,
+            sourcePath: modelInfo.path,
+            rootNode: mmdMesh,
+            meshes: result.meshes as Mesh[],
+        });
+        const materialTargetsByMaterial = new Map<object, { material: unknown; meshNames: string[] }>();
+        for (const target of materialTargets) {
+            const key = target.material as object;
+            const current = materialTargetsByMaterial.get(key) ?? { material: target.material, meshNames: [] };
+            current.meshNames.push(target.meshName);
+            materialTargetsByMaterial.set(key, current);
+        }
         host.emitPluginModelLoaded?.({
             modelIndex: host.sceneModels.length - 1,
             modelName: modelInfo.name,
             modelPath: modelInfo.path,
             rootMesh: mmdMesh,
             meshes: result.meshes as Mesh[],
-            materials: sceneMaterials.map((entry) => ({
+            materials: Array.from(materialTargetsByMaterial.values(), (entry) => ({
                 material: entry.material,
                 meshNames: entry.meshNames,
             })),
