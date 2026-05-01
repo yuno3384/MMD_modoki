@@ -1,6 +1,6 @@
 import type { ScenePlugin } from "./plugin-types";
 import { pluginUiRegistry } from "./ui-registry";
-import { MmeFallbackController } from "./mme-fallback-controller";
+import { MmeFallbackController, type MmeFallbackControllerState } from "./mme-fallback-controller";
 import {
     createMmeManifest,
     getMmeFileKind,
@@ -26,6 +26,8 @@ export type MmePickerRegistrationSummary = {
     readonly rejectedCount: number;
     readonly warnings: readonly string[];
 };
+
+export type MmeCompatApplyStatus = "disabled" | "preview-only" | "experimental-disabled" | "apply not implemented";
 
 export type InternalMmeCompatManifestPlugin = ScenePlugin & {
     getManifest(): MMEManifest | null;
@@ -152,9 +154,7 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         appendSummaryRow(summary, "Fallback Mode", controllerState.mode);
         appendSummaryRow(summary, "Preview Targets", String(controllerState.plannedTargets.length));
         appendSummaryRow(summary, "Experimental Apply Gate", applyGateStatus.experimentalApplyEnabled ? "ON" : "OFF");
-        appendSummaryRow(summary, "Apply Status", controllerState.enabled
-            ? (controllerState.mode === "apply" ? "apply not implemented" : "preview-only")
-            : "disabled");
+        appendSummaryRow(summary, "Apply Status", getMmeCompatApplyStatus(controllerState));
         appendSummaryRow(summary, "Apply Plan Targets", String(applyPlan?.targetRecords.length ?? 0));
 
         const controls = document.createElement("div");
@@ -431,6 +431,19 @@ export async function registerPickedMmeFiles(params: {
         rejectedCount,
         warnings,
     };
+}
+
+export function getMmeCompatApplyStatus(state: Pick<MmeFallbackControllerState, "enabled" | "mode" | "experimentalApplyEnabled">): MmeCompatApplyStatus {
+    if (!state.enabled) {
+        return "disabled";
+    }
+    if (state.mode !== "apply") {
+        return "preview-only";
+    }
+    if (!state.experimentalApplyEnabled) {
+        return "experimental-disabled";
+    }
+    return "apply not implemented";
 }
 
 function buildPreviewInputsFromManifest(manifest: MMEManifest) {

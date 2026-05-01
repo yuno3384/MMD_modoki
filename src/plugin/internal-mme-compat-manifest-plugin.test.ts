@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
     createInternalMmeCompatManifestPlugin,
+    getMmeCompatApplyStatus,
     getMmeFilePathFromPickerFile,
     registerPickedMmeFiles,
 } from "./internal-mme-compat-manifest-plugin";
@@ -19,6 +20,32 @@ const TEST_SCENE_CONTEXT: SceneHookContext = {
 };
 
 describe("InternalMmeCompatManifestPlugin", () => {
+    it("formats apply status with the experimental gate priority", () => {
+        expect(getMmeCompatApplyStatus({
+            enabled: false,
+            mode: "preview",
+            experimentalApplyEnabled: false,
+        })).toBe("disabled");
+
+        expect(getMmeCompatApplyStatus({
+            enabled: true,
+            mode: "preview",
+            experimentalApplyEnabled: false,
+        })).toBe("preview-only");
+
+        expect(getMmeCompatApplyStatus({
+            enabled: true,
+            mode: "apply",
+            experimentalApplyEnabled: false,
+        })).toBe("experimental-disabled");
+
+        expect(getMmeCompatApplyStatus({
+            enabled: true,
+            mode: "apply",
+            experimentalApplyEnabled: true,
+        })).toBe("apply not implemented");
+    });
+
     it("prefers webkitRelativePath for picked files when available", () => {
         expect(getMmeFilePathFromPickerFile({
             name: "main.fx",
