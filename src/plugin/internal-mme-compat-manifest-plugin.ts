@@ -55,9 +55,34 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         appendSummaryRow(summary, "FX", String(manifest.discoveredFxFiles.length));
         appendSummaryRow(summary, "FXSUB", String(manifest.discoveredFxSubFiles.length));
         appendSummaryRow(summary, "CONF", String(manifest.discoveredConfFiles.length));
+        appendSummaryRow(summary, "Parsed FX", String(Object.keys(manifest.parsedEffects).length));
         appendSummaryRow(summary, "Textures", String(manifest.textureCandidates.length));
         appendSummaryRow(summary, "Missing", String(manifest.missingFiles.length));
         appendSummaryRow(summary, "Warnings", String(manifest.warnings.length));
+
+        const parsedEffects = Object.values(manifest.parsedEffects);
+        if (parsedEffects.length > 0) {
+            const parsedSummary = document.createElement("pre");
+            parsedSummary.textContent = JSON.stringify(parsedEffects.map((effect) => ({
+                path: effect.path,
+                parameters: effect.parameters.map((parameter) => parameter.name),
+                textures: effect.textures.map((texture) => texture.name),
+                samplers: effect.samplers.map((sampler) => sampler.name),
+                techniques: effect.techniques.map((technique) => ({
+                    name: technique.name,
+                    passes: technique.passes.map((pass) => pass.name),
+                })),
+                warnings: effect.warnings,
+            })), null, 2);
+            parsedSummary.style.margin = "8px 0 0";
+            parsedSummary.style.padding = "8px";
+            parsedSummary.style.maxHeight = "180px";
+            parsedSummary.style.overflow = "auto";
+            parsedSummary.style.whiteSpace = "pre-wrap";
+            parsedSummary.style.background = "rgba(15, 23, 42, 0.24)";
+            parsedSummary.style.borderRadius = "8px";
+            summary.appendChild(parsedSummary);
+        }
 
         const details = document.createElement("pre");
         details.textContent = JSON.stringify({
@@ -65,6 +90,7 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
             discoveredFxFiles: manifest.discoveredFxFiles,
             discoveredFxSubFiles: manifest.discoveredFxSubFiles,
             discoveredConfFiles: manifest.discoveredConfFiles,
+            parsedEffects: Object.keys(manifest.parsedEffects),
             missingFiles: manifest.missingFiles,
             warnings: manifest.warnings,
         }, null, 2);

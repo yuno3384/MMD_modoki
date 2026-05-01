@@ -1,9 +1,11 @@
 /**
  * Minimal MME compatibility manifest discovery.
  *
- * This step only discovers legacy MME-related files and references. It does
- * not parse HLSL structure, create shaders, or change rendering behavior.
+ * This step performs file discovery and optional partial .fx structural
+ * parsing; it does not compile, translate, or execute shaders.
  */
+import { parseMmeEffectFile, type MMEEffectIR } from "./mme-fx-parser";
+
 export type MmeCompatFileKind =
     | "x"
     | "fx"
@@ -32,6 +34,7 @@ export type MMEManifest = {
     readonly discoveredFxFiles: readonly string[];
     readonly discoveredFxSubFiles: readonly string[];
     readonly discoveredConfFiles: readonly string[];
+    readonly parsedEffects: Readonly<Record<string, MMEEffectIR>>;
     readonly textureCandidates: readonly MmeTextureCandidate[];
     readonly includeGraph: Readonly<Record<string, readonly string[]>>;
     readonly missingFiles: readonly string[];
@@ -138,6 +141,7 @@ export function createMmeManifest(
     const discoveredFxFiles = new Set<string>();
     const discoveredFxSubFiles = new Set<string>();
     const discoveredConfFiles = new Set<string>();
+    const parsedEffects = new Map<string, MMEEffectIR>();
 
     const fileIndex = createMmeFileIndex(files);
     const normalizedRootRequest = normalizeMmePath(rootFile);
@@ -229,12 +233,33 @@ export function createMmeManifest(
         scanTextFile(confFile);
     }
 
+    for (const fxFile of discoveredFxFiles) {
+        const parsedEffect = parseMmeEffectFileEntry(fileIndex, fxFile, "fx");
+        if (parsedEffect) {
+            parsedEffects.set(fxFile, parsedEffect);
+            for (const warning of parsedEffect.warnings) {
+                warnings.push(`[${fxFile}] ${warning}`);
+            }
+        }
+    }
+
+    for (const fxSubFile of discoveredFxSubFiles) {
+        const parsedEffect = parseMmeEffectFileEntry(fileIndex, fxSubFile, "fxsub");
+        if (parsedEffect) {
+            parsedEffects.set(fxSubFile, parsedEffect);
+            for (const warning of parsedEffect.warnings) {
+                warnings.push(`[${fxSubFile}] ${warning}`);
+            }
+        }
+    }
+
     return {
         rootFile: resolvedRoot,
         rootKind,
         discoveredFxFiles: Array.from(discoveredFxFiles),
         discoveredFxSubFiles: Array.from(discoveredFxSubFiles),
         discoveredConfFiles: Array.from(discoveredConfFiles),
+        parsedEffects: Object.freeze(Object.fromEntries(parsedEffects.entries())),
         textureCandidates,
         includeGraph: Object.freeze(Object.fromEntries(
             Array.from(includeGraph.entries()).map(([key, value]) => [key, Object.freeze([...value])]),
@@ -370,4 +395,20 @@ function countReplacementChars(text: string): number {
 
 function isMmeCompatFileEntryList(value: MmeFileIndex | readonly MmeCompatFileEntry[]): value is readonly MmeCompatFileEntry[] {
     return Array.isArray(value);
+}
+
+function parseMmeEffectFileEntry(
+    fileIndex: MmeFileIndex,
+    normalizedPath: string,
+    kind: "fx" | "fxsub",
+): MMEEffectIR | null {
+    const fileEntry = fileIndex.exact.get(normalizedPath);
+    if (!fileEntry?.text) {
+        return null;
+    }
+    return parseMmeEffectFile({
+        path: normalizedPath,
+        kind,
+        text: fileEntry.text,
+    });
 }
