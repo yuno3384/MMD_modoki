@@ -28,7 +28,13 @@ export type MmeFallbackPreviewPlanItem = {
     readonly meshName: string | null;
     readonly materialName: string | null;
     readonly sourcePath: string | null;
+    readonly analysisStatus: MmeEffectAnalysis["status"];
+    readonly analysisConfidence: number;
+    readonly fallbackConfidence: number;
     readonly preset: MmeFallbackPlan["preset"];
+    readonly fallbackReasons: readonly string[];
+    readonly mappedFields: Readonly<Record<string, unknown>>;
+    readonly blockedByUnsupportedFeatures: readonly string[];
     readonly factoryStatus: MmeFallbackMaterialFactoryResult["status"];
     readonly warnings: readonly string[];
 };
@@ -111,9 +117,16 @@ export class MmeFallbackController {
                 meshName: input.meshName ?? null,
                 materialName: input.materialName ?? null,
                 sourcePath: input.sourcePath ?? input.effect.path,
+                analysisStatus: analysis.status,
+                analysisConfidence: analysis.confidence,
+                fallbackConfidence: plan.confidence,
                 preset: plan.preset,
+                fallbackReasons: plan.reasons,
+                mappedFields: Object.fromEntries(Object.entries(analysis.mappedFields)
+                    .filter(([, value]) => value !== null)),
+                blockedByUnsupportedFeatures: plan.blockedByUnsupportedFeatures,
                 factoryStatus: factoryResult.status,
-                warnings: factoryResult.warnings,
+                warnings: [...plan.warnings, ...factoryResult.warnings],
             });
             activeTargets.push(input.effectId);
         }

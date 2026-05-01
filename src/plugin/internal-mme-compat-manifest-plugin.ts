@@ -1,9 +1,6 @@
 import type { ScenePlugin } from "./plugin-types";
 import { pluginUiRegistry } from "./ui-registry";
-import { analyzeMmeEffectIR } from "./mme-effect-mapper";
 import { MmeFallbackController } from "./mme-fallback-controller";
-import { createMmeFallbackMaterial } from "./mme-fallback-material-factory";
-import { planMmeFallbackPreset } from "./mme-fallback-preset-planner";
 import {
     createMmeManifest,
     type MMEManifest,
@@ -105,57 +102,47 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
 
         const parsedEffects = Object.values(manifest.parsedEffects);
         if (parsedEffects.length > 0) {
-            fallbackController.clearPreview();
-            const analyses = parsedEffects.map((effect) => ({
-                path: effect.path,
-                analysis: analyzeMmeEffectIR(effect, { manifest }),
-                plan: planMmeFallbackPreset(analyzeMmeEffectIR(effect, { manifest }), effect, { manifest }),
-            }));
-            const previewPlan = fallbackController.buildPreviewPlan(parsedEffects.map((effect) => ({
-                effectId: effect.path,
-                effect,
-                targetName: effect.path.split("/").pop() ?? effect.path,
-                materialName: effect.path.split("/").pop() ?? effect.path,
-                sourcePath: effect.path,
-            })), { manifest });
-            const parsedSummary = document.createElement("pre");
-            parsedSummary.textContent = JSON.stringify(analyses.map(({ path, analysis, plan }) => {
-                const factoryResult = createMmeFallbackMaterial({
-                    scene: null,
-                    plan,
-                    analysis,
-                    targetMetadata: {
-                        targetName: path.split("/").pop() ?? path,
-                        sourcePath: path,
-                    },
-                    dryRun: true,
-                });
+            const previewNotice = document.createElement("div");
+            previewNotice.style.marginTop = "8px";
+            previewNotice.style.fontSize = "12px";
+            previewNotice.style.opacity = "0.75";
+            previewNotice.textContent = controllerState.enabled
+                ? "Dry-run diagnostic preview. No fallback materials are applied to scene meshes."
+                : "Dry-run diagnostic preview is disabled by default. No analysis/planning preview is being computed.";
+            summary.appendChild(previewNotice);
 
-                return {
-                path,
-                status: analysis.status,
-                confidence: Number(analysis.confidence.toFixed(2)),
-                fallbackPreset: plan.preset,
-                fallbackConfidence: Number(plan.confidence.toFixed(2)),
-                fallbackReasons: plan.reasons,
-                fallbackMaterialStatus: factoryResult.status,
-                fallbackMaterialType: factoryResult.materialType,
-                fallbackMaterialWarnings: factoryResult.warnings,
-                mappedFields: Object.fromEntries(Object.entries(analysis.mappedFields)
-                    .filter(([, value]) => value !== null)),
-                unsupportedFeatures: plan.blockedByUnsupportedFeatures,
-                warnings: plan.warnings,
-                previewPlanStatus: previewPlan.find((entry) => entry.effectId === path)?.factoryStatus ?? "skipped",
-                };
-            }), null, 2);
-            parsedSummary.style.margin = "8px 0 0";
-            parsedSummary.style.padding = "8px";
-            parsedSummary.style.maxHeight = "180px";
-            parsedSummary.style.overflow = "auto";
-            parsedSummary.style.whiteSpace = "pre-wrap";
-            parsedSummary.style.background = "rgba(15, 23, 42, 0.24)";
-            parsedSummary.style.borderRadius = "8px";
-            summary.appendChild(parsedSummary);
+            if (controllerState.enabled) {
+                const previewPlan = fallbackController.buildPreviewPlan(parsedEffects.map((effect) => ({
+                    effectId: effect.path,
+                    effect,
+                    targetName: effect.path.split("/").pop() ?? effect.path,
+                    materialName: effect.path.split("/").pop() ?? effect.path,
+                    sourcePath: effect.path,
+                })), { manifest });
+                const parsedSummary = document.createElement("pre");
+                parsedSummary.textContent = JSON.stringify(previewPlan.map((entry) => ({
+                    path: entry.effectId,
+                    status: entry.analysisStatus,
+                    confidence: Number(entry.analysisConfidence.toFixed(2)),
+                    fallbackPreset: entry.preset,
+                    fallbackConfidence: Number(entry.fallbackConfidence.toFixed(2)),
+                    fallbackReasons: entry.fallbackReasons,
+                    fallbackMaterialStatus: entry.factoryStatus,
+                    mappedFields: entry.mappedFields,
+                    unsupportedFeatures: entry.blockedByUnsupportedFeatures,
+                    warnings: entry.warnings,
+                })), null, 2);
+                parsedSummary.style.margin = "8px 0 0";
+                parsedSummary.style.padding = "8px";
+                parsedSummary.style.maxHeight = "180px";
+                parsedSummary.style.overflow = "auto";
+                parsedSummary.style.whiteSpace = "pre-wrap";
+                parsedSummary.style.background = "rgba(15, 23, 42, 0.24)";
+                parsedSummary.style.borderRadius = "8px";
+                summary.appendChild(parsedSummary);
+            } else {
+                fallbackController.clearPreview();
+            }
         }
 
         const details = document.createElement("pre");
