@@ -1,5 +1,6 @@
 import type { ScenePlugin } from "./plugin-types";
 import { pluginUiRegistry } from "./ui-registry";
+import { analyzeMmeEffectIR } from "./mme-effect-mapper";
 import {
     createMmeManifest,
     type MMEManifest,
@@ -62,17 +63,19 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
 
         const parsedEffects = Object.values(manifest.parsedEffects);
         if (parsedEffects.length > 0) {
-            const parsedSummary = document.createElement("pre");
-            parsedSummary.textContent = JSON.stringify(parsedEffects.map((effect) => ({
+            const analyses = parsedEffects.map((effect) => ({
                 path: effect.path,
-                parameters: effect.parameters.map((parameter) => parameter.name),
-                textures: effect.textures.map((texture) => texture.name),
-                samplers: effect.samplers.map((sampler) => sampler.name),
-                techniques: effect.techniques.map((technique) => ({
-                    name: technique.name,
-                    passes: technique.passes.map((pass) => pass.name),
-                })),
-                warnings: effect.warnings,
+                analysis: analyzeMmeEffectIR(effect, { manifest }),
+            }));
+            const parsedSummary = document.createElement("pre");
+            parsedSummary.textContent = JSON.stringify(analyses.map(({ path, analysis }) => ({
+                path,
+                status: analysis.status,
+                confidence: Number(analysis.confidence.toFixed(2)),
+                mappedFields: Object.fromEntries(Object.entries(analysis.mappedFields)
+                    .filter(([, value]) => value !== null)),
+                unsupportedFeatures: analysis.unsupportedFeatures,
+                warnings: analysis.warnings,
             })), null, 2);
             parsedSummary.style.margin = "8px 0 0";
             parsedSummary.style.padding = "8px";
