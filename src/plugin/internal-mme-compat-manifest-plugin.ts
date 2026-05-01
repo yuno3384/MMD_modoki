@@ -62,6 +62,7 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         lastPickerWarnings = [];
         lastPickerAcceptedCount = 0;
         fallbackController.setEnabled(false);
+        fallbackController.setExperimentalApplyEnabled(false);
         rerenderPanels();
     };
 
@@ -145,10 +146,12 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         appendSummaryRow(summary, "Warnings", String(manifest.warnings.length));
 
         const controllerState = fallbackController.getState();
+        const applyGateStatus = fallbackController.getApplyGateStatus();
         const applyPlan = fallbackController.getApplyPlan();
         appendSummaryRow(summary, "Fallback Preview", controllerState.enabled ? "ON" : "OFF");
         appendSummaryRow(summary, "Fallback Mode", controllerState.mode);
         appendSummaryRow(summary, "Preview Targets", String(controllerState.plannedTargets.length));
+        appendSummaryRow(summary, "Experimental Apply Gate", applyGateStatus.experimentalApplyEnabled ? "ON" : "OFF");
         appendSummaryRow(summary, "Apply Status", controllerState.enabled
             ? (controllerState.mode === "apply" ? "apply not implemented" : "preview-only")
             : "disabled");
@@ -195,6 +198,22 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         controls.appendChild(modeSelect);
         summary.appendChild(controls);
 
+        const experimentalApplyToggle = document.createElement("label");
+        experimentalApplyToggle.style.display = "flex";
+        experimentalApplyToggle.style.alignItems = "center";
+        experimentalApplyToggle.style.gap = "6px";
+        experimentalApplyToggle.style.marginTop = "8px";
+        const experimentalApplyCheckbox = document.createElement("input");
+        experimentalApplyCheckbox.type = "checkbox";
+        experimentalApplyCheckbox.checked = applyGateStatus.experimentalApplyEnabled;
+        experimentalApplyCheckbox.addEventListener("change", () => {
+            fallbackController.setExperimentalApplyEnabled(experimentalApplyCheckbox.checked);
+            rerenderPanels();
+        });
+        experimentalApplyToggle.appendChild(experimentalApplyCheckbox);
+        experimentalApplyToggle.appendChild(document.createTextNode("Experimental Apply Gate (opt-in only, no material application implemented yet)"));
+        summary.appendChild(experimentalApplyToggle);
+
         const applyButton = document.createElement("button");
         applyButton.type = "button";
         applyButton.disabled = true;
@@ -210,7 +229,7 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
             previewNotice.style.opacity = "0.75";
             previewNotice.textContent = controllerState.enabled
                 ? "Dry-run diagnostic preview. No fallback materials are applied to scene meshes or materials."
-                : "Dry-run diagnostic preview is disabled by default. No analysis/planning preview is being computed.";
+                : "Dry-run diagnostic preview is disabled by default. No analysis/planning preview is being computed. Experimental apply is also not implemented.";
             summary.appendChild(previewNotice);
 
             if (controllerState.enabled) {

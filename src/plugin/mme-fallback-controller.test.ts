@@ -10,6 +10,7 @@ describe("MmeFallbackController", () => {
         expect(controller.getState()).toMatchObject({
             enabled: false,
             mode: "preview",
+            experimentalApplyEnabled: false,
             selectedEffectId: null,
             activeTargets: [],
             plannedTargets: [],
@@ -147,16 +148,21 @@ technique Post {
 
         expect(controller.applyFallback()).toMatchObject({
             status: "blocked",
-            reason: "apply-disabled",
+            reason: "controller-disabled",
         });
 
         controller.setEnabled(true);
         expect(controller.applyFallback()).toMatchObject({
             status: "blocked",
-            reason: "apply-mode-required",
+            reason: "not-apply-mode",
         });
 
         controller.setMode("apply");
+        expect(controller.applyFallback()).toMatchObject({
+            status: "blocked",
+            reason: "experimental-apply-disabled",
+        });
+
         controller.planApply([
             {
                 effectId: "basic",
@@ -168,9 +174,19 @@ technique Post {
                 }),
             },
         ]);
+        controller.setExperimentalApplyEnabled(true);
         expect(controller.applyFallback()).toMatchObject({
             status: "unsupported",
             reason: "apply-not-implemented",
+        });
+    });
+
+    it("keeps experimental apply disabled by default and reports gate status", () => {
+        const controller = new MmeFallbackController();
+
+        expect(controller.isExperimentalApplyEnabled()).toBe(false);
+        expect(controller.getApplyGateStatus()).toEqual({
+            experimentalApplyEnabled: false,
         });
     });
 
@@ -251,6 +267,7 @@ technique Post {
     it("dispose clears state", () => {
         const controller = new MmeFallbackController();
         controller.setEnabled(true);
+        controller.setExperimentalApplyEnabled(true);
         controller.buildPreviewPlan([
             {
                 effectId: "basic",
@@ -278,6 +295,7 @@ technique Post {
 
         expect(controller.getState()).toMatchObject({
             enabled: false,
+            experimentalApplyEnabled: false,
             selectedEffectId: null,
             activeTargets: [],
             plannedTargets: [],

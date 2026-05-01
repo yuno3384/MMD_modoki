@@ -44,6 +44,7 @@ export type MmeFallbackPreviewPlanItem = {
 export type MmeFallbackControllerState = {
     readonly enabled: boolean;
     readonly mode: MmeFallbackControllerMode;
+    readonly experimentalApplyEnabled: boolean;
     readonly selectedEffectId: string | null;
     readonly activeTargets: readonly string[];
     readonly plannedTargets: readonly MmeFallbackPreviewPlanItem[];
@@ -53,6 +54,10 @@ export type MmeFallbackApplyResult = {
     readonly status: "blocked" | "unsupported" | "applied";
     readonly reason: string;
     readonly warnings: readonly string[];
+};
+
+export type MmeFallbackApplyGateStatus = {
+    readonly experimentalApplyEnabled: boolean;
 };
 
 export type MmeFallbackRevertResult = {
@@ -83,6 +88,7 @@ export type MmeFallbackApplyTransaction = {
 export class MmeFallbackController {
     private enabled = false;
     private mode: MmeFallbackControllerMode = "preview";
+    private experimentalApplyEnabled = false;
     private selectedEffectId: string | null = null;
     private activeTargets: string[] = [];
     private plannedTargets: MmeFallbackPreviewPlanItem[] = [];
@@ -93,6 +99,7 @@ export class MmeFallbackController {
         return {
             enabled: this.enabled,
             mode: this.mode,
+            experimentalApplyEnabled: this.experimentalApplyEnabled,
             selectedEffectId: this.selectedEffectId,
             activeTargets: [...this.activeTargets],
             plannedTargets: [...this.plannedTargets],
@@ -109,6 +116,20 @@ export class MmeFallbackController {
 
     public setMode(mode: MmeFallbackControllerMode): void {
         this.mode = mode;
+    }
+
+    public setExperimentalApplyEnabled(enabled: boolean): void {
+        this.experimentalApplyEnabled = enabled;
+    }
+
+    public isExperimentalApplyEnabled(): boolean {
+        return this.experimentalApplyEnabled;
+    }
+
+    public getApplyGateStatus(): MmeFallbackApplyGateStatus {
+        return {
+            experimentalApplyEnabled: this.experimentalApplyEnabled,
+        };
     }
 
     public buildPreviewPlan(
@@ -182,15 +203,22 @@ export class MmeFallbackController {
         if (!this.enabled) {
             return {
                 status: "blocked",
-                reason: "apply-disabled",
-                warnings: ["Fallback apply is disabled"],
+                reason: "controller-disabled",
+                warnings: ["Fallback apply controller is disabled"],
             };
         }
         if (this.mode !== "apply") {
             return {
                 status: "blocked",
-                reason: "apply-mode-required",
+                reason: "not-apply-mode",
                 warnings: ["Fallback apply requires apply mode"],
+            };
+        }
+        if (!this.experimentalApplyEnabled) {
+            return {
+                status: "blocked",
+                reason: "experimental-apply-disabled",
+                warnings: ["Experimental fallback apply opt-in is disabled"],
             };
         }
         if (!this.applyPlan) {
@@ -232,6 +260,7 @@ export class MmeFallbackController {
 
     public dispose(): void {
         this.setEnabled(false);
+        this.setExperimentalApplyEnabled(false);
         this.clearApplyPlan();
         this.disposeOwnedFactoryResults();
     }
