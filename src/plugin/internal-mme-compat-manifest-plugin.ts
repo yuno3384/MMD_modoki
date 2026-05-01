@@ -63,9 +63,14 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         appendSummaryRow(summary, "Warnings", String(manifest.warnings.length));
 
         const controllerState = fallbackController.getState();
+        const applyPlan = fallbackController.getApplyPlan();
         appendSummaryRow(summary, "Fallback Preview", controllerState.enabled ? "ON" : "OFF");
         appendSummaryRow(summary, "Fallback Mode", controllerState.mode);
         appendSummaryRow(summary, "Preview Targets", String(controllerState.plannedTargets.length));
+        appendSummaryRow(summary, "Apply Status", controllerState.enabled
+            ? (controllerState.mode === "apply" ? "apply not implemented" : "preview-only")
+            : "disabled");
+        appendSummaryRow(summary, "Apply Plan Targets", String(applyPlan?.targetRecords.length ?? 0));
 
         const controls = document.createElement("div");
         controls.style.display = "grid";
@@ -99,6 +104,13 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         controls.appendChild(previewToggle);
         controls.appendChild(modeSelect);
         summary.appendChild(controls);
+
+        const applyButton = document.createElement("button");
+        applyButton.type = "button";
+        applyButton.disabled = true;
+        applyButton.textContent = "Apply Fallback (TODO)";
+        applyButton.style.marginTop = "4px";
+        summary.appendChild(applyButton);
 
         const parsedEffects = Object.values(manifest.parsedEffects);
         if (parsedEffects.length > 0) {
@@ -204,6 +216,7 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         clearManifest(): void {
             manifest = null;
             fallbackController.clearPreview();
+            fallbackController.clearApplyPlan();
             rerenderPanels();
         },
         onDispose(): void {

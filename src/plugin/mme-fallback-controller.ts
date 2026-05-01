@@ -1,3 +1,4 @@
+import type { Material } from "@babylonjs/core/Materials/material";
 import type { Scene } from "@babylonjs/core/scene";
 
 import { analyzeMmeEffectIR, type MmeEffectAnalysis } from "./mme-effect-mapper";
@@ -18,6 +19,7 @@ export type MmeFallbackPreviewInput = {
     readonly targetName?: string | null;
     readonly meshName?: string | null;
     readonly materialName?: string | null;
+    readonly originalMaterial?: Material | null;
     readonly sourcePath?: string | null;
     readonly scene?: Scene | null;
 };
@@ -49,7 +51,33 @@ export type MmeFallbackControllerState = {
 
 export type MmeFallbackApplyResult = {
     readonly status: "blocked" | "unsupported" | "applied";
+    readonly reason: string;
     readonly warnings: readonly string[];
+};
+
+export type MmeFallbackRevertResult = {
+    readonly status: "noop" | "blocked" | "reverted";
+    readonly reason: string;
+    readonly warnings: readonly string[];
+};
+
+export type MmeFallbackApplyTargetRecord = {
+    readonly effectId: string;
+    readonly targetName: string | null;
+    readonly meshName: string | null;
+    readonly materialName: string | null;
+    readonly sourcePath: string | null;
+    readonly originalMaterial: Material | null;
+    readonly originalMaterialAvailable: boolean;
+    readonly plannedFallback: MmeFallbackPreviewPlanItem;
+    readonly plannedFallbackOwnership: "none" | "controller" | "external";
+};
+
+export type MmeFallbackApplyTransaction = {
+    readonly transactionId: string;
+    readonly createdAt: string;
+    readonly targetRecords: readonly MmeFallbackApplyTargetRecord[];
+    readonly status: "planned" | "applied" | "reverted" | "failed";
 };
 
 export class MmeFallbackController {
@@ -58,6 +86,7 @@ export class MmeFallbackController {
     private selectedEffectId: string | null = null;
     private activeTargets: string[] = [];
     private plannedTargets: MmeFallbackPreviewPlanItem[] = [];
+    private applyPlan: MmeFallbackApplyTransaction | null = null;
     private readonly ownedFactoryResults = new Set<MmeFallbackMaterialFactoryResult>();
 
     public getState(): MmeFallbackControllerState {
@@ -74,6 +103,7 @@ export class MmeFallbackController {
         this.enabled = enabled;
         if (!enabled) {
             this.clearPreview();
+            this.clearApplyPlan();
         }
     }
 
@@ -94,8 +124,130 @@ export class MmeFallbackController {
             return this.plannedTargets;
         }
 
+        const previewItems = this.buildPlannedTargets(inputs, context);
+        const activeTargets = inputs.map((input) => input.effectId);
+
+        this.selectedEffectId = inputs[0]?.effectId ?? null;
+        this.activeTargets = activeTargets;
+        this.plannedTargets = previewItems;
+        return this.plannedTargets;
+    }
+
+    public clearPreview(): void {
+        this.disposeOwnedFactoryResults();
+        this.selectedEffectId = null;
+        this.activeTargets = [];
+        this.plannedTargets = [];
+    }
+
+    public planApply(
+        inputs: readonly MmeFallbackPreviewInput[],
+        context?: { manifest?: Pick<MMEManifest, "textureCandidates"> },
+    ): MmeFallbackApplyTransaction | null {
+        const previewPlan = this.buildPlannedTargets(inputs, context);
+        if (previewPlan.length === 0) {
+            this.applyPlan = null;
+            return this.applyPlan;
+        }
+
+        this.applyPlan = {
+            transactionId: this.createTransactionId(),
+            createdAt: new Date().toISOString(),
+            targetRecords: previewPlan.map((entry, index) => ({
+                effectId: entry.effectId,
+                targetName: entry.targetName,
+                meshName: entry.meshName,
+                materialName: entry.materialName,
+                sourcePath: entry.sourcePath,
+                originalMaterial: inputs[index]?.originalMaterial ?? null,
+                originalMaterialAvailable: Object.prototype.hasOwnProperty.call(inputs[index] ?? {}, "originalMaterial"),
+                plannedFallback: entry,
+                plannedFallbackOwnership: "none",
+            })),
+            status: "planned",
+        };
+
+        return this.applyPlan;
+    }
+
+    public clearApplyPlan(): void {
+        this.applyPlan = null;
+    }
+
+    public getApplyPlan(): MmeFallbackApplyTransaction | null {
+        return this.applyPlan;
+    }
+
+    public applyFallback(): MmeFallbackApplyResult {
+        if (!this.enabled) {
+            return {
+                status: "blocked",
+                reason: "apply-disabled",
+                warnings: ["Fallback apply is disabled"],
+            };
+        }
+        if (this.mode !== "apply") {
+            return {
+                status: "blocked",
+                reason: "apply-mode-required",
+                warnings: ["Fallback apply requires apply mode"],
+            };
+        }
+        if (!this.applyPlan) {
+            return {
+                status: "blocked",
+                reason: "apply-plan-missing",
+                warnings: ["Fallback apply requires an explicit apply plan"],
+            };
+        }
+        return {
+            status: "unsupported",
+            reason: "apply-not-implemented",
+            warnings: ["Actual fallback material assignment is intentionally not implemented in this step"],
+        };
+    }
+
+    public revertApply(): MmeFallbackRevertResult {
+        if (!this.applyPlan) {
+            return {
+                status: "noop",
+                reason: "no-transaction",
+                warnings: ["No fallback apply transaction exists to revert"],
+            };
+        }
+        if (this.applyPlan.status !== "applied") {
+            return {
+                status: "noop",
+                reason: "transaction-not-applied",
+                warnings: ["Fallback apply transaction has not been applied"],
+            };
+        }
+
+        return {
+            status: "blocked",
+            reason: "revert-not-implemented",
+            warnings: ["Fallback material revert is intentionally not implemented in this step"],
+        };
+    }
+
+    public dispose(): void {
+        this.setEnabled(false);
+        this.clearApplyPlan();
+        this.disposeOwnedFactoryResults();
+    }
+
+    private disposeOwnedFactoryResults(): void {
+        for (const result of this.ownedFactoryResults) {
+            disposeMmeFallbackMaterial(result);
+        }
+        this.ownedFactoryResults.clear();
+    }
+
+    private buildPlannedTargets(
+        inputs: readonly MmeFallbackPreviewInput[],
+        context?: { manifest?: Pick<MMEManifest, "textureCandidates"> },
+    ): MmeFallbackPreviewPlanItem[] {
         const previewItems: MmeFallbackPreviewPlanItem[] = [];
-        const activeTargets: string[] = [];
 
         for (const input of inputs) {
             const analysis: MmeEffectAnalysis = analyzeMmeEffectIR(input.effect, context);
@@ -128,50 +280,12 @@ export class MmeFallbackController {
                 factoryStatus: factoryResult.status,
                 warnings: [...plan.warnings, ...factoryResult.warnings],
             });
-            activeTargets.push(input.effectId);
         }
 
-        this.selectedEffectId = inputs[0]?.effectId ?? null;
-        this.activeTargets = activeTargets;
-        this.plannedTargets = previewItems;
-        return this.plannedTargets;
+        return previewItems;
     }
 
-    public clearPreview(): void {
-        this.disposeOwnedFactoryResults();
-        this.selectedEffectId = null;
-        this.activeTargets = [];
-        this.plannedTargets = [];
-    }
-
-    public applyFallback(): MmeFallbackApplyResult {
-        if (!this.enabled) {
-            return {
-                status: "blocked",
-                warnings: ["Fallback apply is disabled"],
-            };
-        }
-        if (this.mode !== "apply") {
-            return {
-                status: "blocked",
-                warnings: ["Fallback apply requires apply mode"],
-            };
-        }
-        return {
-            status: "unsupported",
-            warnings: ["Actual fallback material assignment is intentionally not implemented in this step"],
-        };
-    }
-
-    public dispose(): void {
-        this.setEnabled(false);
-        this.disposeOwnedFactoryResults();
-    }
-
-    private disposeOwnedFactoryResults(): void {
-        for (const result of this.ownedFactoryResults) {
-            disposeMmeFallbackMaterial(result);
-        }
-        this.ownedFactoryResults.clear();
+    private createTransactionId(): string {
+        return `mme-fallback-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     }
 }
