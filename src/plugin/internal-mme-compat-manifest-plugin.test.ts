@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 
 import {
     createInternalMmeCompatManifestPlugin,
+    filterAndSortMmeTargetCandidates,
     getMmeCompatApplyStatus,
     getMmeFilePathFromPickerFile,
     registerPickedMmeFiles,
 } from "./internal-mme-compat-manifest-plugin";
 import type { SceneHookContext } from "./plugin-types";
+import type { MmeFallbackTargetCandidate } from "./mme-fallback-controller";
 
 const TEST_SCENE_CONTEXT: SceneHookContext = {
     runtime: {
@@ -20,6 +22,56 @@ const TEST_SCENE_CONTEXT: SceneHookContext = {
 };
 
 describe("InternalMmeCompatManifestPlugin", () => {
+    it("filters candidates by kind, preset, and status without mutating the source array", () => {
+        const candidates = createCandidateFixtures();
+        const originalSnapshot = [...candidates];
+
+        const filtered = filterAndSortMmeTargetCandidates(candidates, {
+            kind: "model",
+            preset: "basicToon",
+            status: "global-effect-candidate",
+            search: "",
+            sortKey: "confidenceDesc",
+        });
+
+        expect(filtered).toHaveLength(1);
+        expect(filtered[0].targetId).toBe("model-body");
+        expect(candidates).toEqual(originalSnapshot);
+    });
+
+    it("filters candidates by text search and sorts by confidence descending", () => {
+        const candidates = createCandidateFixtures();
+
+        const filtered = filterAndSortMmeTargetCandidates(candidates, {
+            kind: "all",
+            preset: "all",
+            status: "all",
+            search: "body",
+            sortKey: "confidenceDesc",
+        });
+
+        expect(filtered.map((candidate) => candidate.targetId)).toEqual(["model-body", "accessory-body"]);
+        expect(filtered[0].confidence).toBeGreaterThanOrEqual(filtered[1].confidence);
+    });
+
+    it("sorts candidates by material name", () => {
+        const candidates = createCandidateFixtures();
+
+        const filtered = filterAndSortMmeTargetCandidates(candidates, {
+            kind: "all",
+            preset: "all",
+            status: "all",
+            search: "",
+            sortKey: "materialName",
+        });
+
+        expect(filtered.map((candidate) => candidate.materialName)).toEqual([
+            "AccessoryBodyMaterial",
+            "BodyMaterial",
+            "FaceMaterial",
+        ]);
+    });
+
     it("formats apply status with the experimental gate priority", () => {
         expect(getMmeCompatApplyStatus({
             enabled: false,
@@ -289,3 +341,53 @@ describe("InternalMmeCompatManifestPlugin", () => {
         }
     });
 });
+
+function createCandidateFixtures(): MmeFallbackTargetCandidate[] {
+    return [
+        {
+            targetId: "model-body",
+            effectId: "basic.fx",
+            targetKind: "model",
+            ownerName: "Miku",
+            meshName: "BodyMesh",
+            materialName: "BodyMaterial",
+            sourcePath: "model.pmx",
+            recommendedFallbackPreset: "basicToon",
+            confidence: 0.9,
+            status: "global-effect-candidate",
+            warnings: [],
+            blockedReasons: [],
+            matchingPolicy: "single-global-effect",
+        },
+        {
+            targetId: "accessory-body",
+            effectId: "ray.fx",
+            targetKind: "accessory",
+            ownerName: "Accessory",
+            meshName: "BodyAccessoryMesh",
+            materialName: "AccessoryBodyMaterial",
+            sourcePath: "ray.x",
+            recommendedFallbackPreset: "unsupported",
+            confidence: 0.4,
+            status: "unsupported",
+            warnings: ["unsupported"],
+            blockedReasons: ["custom-pixel-shader"],
+            matchingPolicy: "multi-global-effect",
+        },
+        {
+            targetId: "model-face",
+            effectId: null,
+            targetKind: "model",
+            ownerName: "Miku",
+            meshName: "FaceMesh",
+            materialName: "FaceMaterial",
+            sourcePath: "model.pmx",
+            recommendedFallbackPreset: "none",
+            confidence: 0,
+            status: "unmatched",
+            warnings: ["unmatched"],
+            blockedReasons: ["preview-unavailable"],
+            matchingPolicy: "unmatched",
+        },
+    ];
+}

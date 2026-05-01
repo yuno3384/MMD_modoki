@@ -33,6 +33,18 @@ export type MmePickerRegistrationSummary = {
 };
 
 export type MmeCompatApplyStatus = "disabled" | "preview-only" | "experimental-disabled" | "apply not implemented";
+export type MmeCandidateFilterKind = "all" | "model" | "accessory";
+export type MmeCandidateFilterPreset = "all" | "basicToon" | "textureToon" | "katameLike" | "emissiveLite" | "unsupported" | "none";
+export type MmeCandidateFilterStatus = "all" | "global-effect-candidate" | "unsupported" | "unmatched";
+export type MmeCandidateSortKey = "ownerName" | "materialName" | "preset" | "confidenceDesc";
+
+export type MmeCandidateViewOptions = {
+    readonly kind: MmeCandidateFilterKind;
+    readonly preset: MmeCandidateFilterPreset;
+    readonly status: MmeCandidateFilterStatus;
+    readonly search: string;
+    readonly sortKey: MmeCandidateSortKey;
+};
 
 export type InternalMmeCompatManifestPlugin = ScenePlugin & {
     getManifest(): MMEManifest | null;
@@ -68,6 +80,13 @@ export function createInternalMmeCompatManifestPlugin(
     const fallbackController = new MmeFallbackController();
     let lastPickerWarnings: string[] = [];
     let lastPickerAcceptedCount = 0;
+    let candidateViewOptions: MmeCandidateViewOptions = {
+        kind: "all",
+        preset: "all",
+        status: "all",
+        search: "",
+        sortKey: "confidenceDesc",
+    };
 
     const clearCurrentManifest = (): void => {
         manifest = null;
@@ -280,9 +299,92 @@ export function createInternalMmeCompatManifestPlugin(
 
                 appendSummaryRow(summary, "Scene Target Candidates", String(targetCandidates.length));
 
-                if (targetCandidates.length > 0) {
+                const candidateControls = document.createElement("div");
+                candidateControls.style.display = "grid";
+                candidateControls.style.gridTemplateColumns = "repeat(2, minmax(0, 1fr))";
+                candidateControls.style.gap = "8px";
+                candidateControls.style.marginTop = "8px";
+
+                const kindSelect = createSelectControl([
+                    { value: "all", label: "Kind: all" },
+                    { value: "model", label: "Kind: model" },
+                    { value: "accessory", label: "Kind: accessory" },
+                ], candidateViewOptions.kind, (value) => {
+                    candidateViewOptions = {
+                        ...candidateViewOptions,
+                        kind: value as MmeCandidateFilterKind,
+                    };
+                    rerenderPanels();
+                });
+                const presetSelect = createSelectControl([
+                    { value: "all", label: "Preset: all" },
+                    { value: "basicToon", label: "Preset: basicToon" },
+                    { value: "textureToon", label: "Preset: textureToon" },
+                    { value: "katameLike", label: "Preset: katameLike" },
+                    { value: "emissiveLite", label: "Preset: emissiveLite" },
+                    { value: "unsupported", label: "Preset: unsupported" },
+                    { value: "none", label: "Preset: none" },
+                ], candidateViewOptions.preset, (value) => {
+                    candidateViewOptions = {
+                        ...candidateViewOptions,
+                        preset: value as MmeCandidateFilterPreset,
+                    };
+                    rerenderPanels();
+                });
+                const statusSelect = createSelectControl([
+                    { value: "all", label: "Status: all" },
+                    { value: "global-effect-candidate", label: "Status: global candidate" },
+                    { value: "unsupported", label: "Status: unsupported" },
+                    { value: "unmatched", label: "Status: unmatched" },
+                ], candidateViewOptions.status, (value) => {
+                    candidateViewOptions = {
+                        ...candidateViewOptions,
+                        status: value as MmeCandidateFilterStatus,
+                    };
+                    rerenderPanels();
+                });
+                const sortSelect = createSelectControl([
+                    { value: "confidenceDesc", label: "Sort: confidence desc" },
+                    { value: "ownerName", label: "Sort: owner name" },
+                    { value: "materialName", label: "Sort: material name" },
+                    { value: "preset", label: "Sort: preset" },
+                ], candidateViewOptions.sortKey, (value) => {
+                    candidateViewOptions = {
+                        ...candidateViewOptions,
+                        sortKey: value as MmeCandidateSortKey,
+                    };
+                    rerenderPanels();
+                });
+
+                candidateControls.appendChild(kindSelect);
+                candidateControls.appendChild(presetSelect);
+                candidateControls.appendChild(statusSelect);
+                candidateControls.appendChild(sortSelect);
+
+                const searchInput = document.createElement("input");
+                searchInput.type = "search";
+                searchInput.placeholder = "Search owner / mesh / material / effect";
+                searchInput.value = candidateViewOptions.search;
+                searchInput.addEventListener("input", () => {
+                    candidateViewOptions = {
+                        ...candidateViewOptions,
+                        search: searchInput.value,
+                    };
+                    rerenderPanels();
+                });
+                searchInput.style.marginTop = "8px";
+                searchInput.style.padding = "6px 8px";
+                searchInput.style.borderRadius = "6px";
+                searchInput.style.border = "1px solid rgba(148, 163, 184, 0.35)";
+                summary.appendChild(candidateControls);
+                summary.appendChild(searchInput);
+
+                const visibleCandidates = filterAndSortMmeTargetCandidates(targetCandidates, candidateViewOptions);
+                appendSummaryRow(summary, "Visible Candidates", String(visibleCandidates.length));
+
+                if (visibleCandidates.length > 0) {
                     const candidateSummary = document.createElement("pre");
-                    candidateSummary.textContent = JSON.stringify(summarizeTargetCandidates(targetCandidates), null, 2);
+                    candidateSummary.textContent = JSON.stringify(summarizeTargetCandidates(visibleCandidates), null, 2);
                     candidateSummary.style.margin = "8px 0 0";
                     candidateSummary.style.padding = "8px";
                     candidateSummary.style.maxHeight = "180px";
@@ -291,6 +393,12 @@ export function createInternalMmeCompatManifestPlugin(
                     candidateSummary.style.background = "rgba(15, 23, 42, 0.24)";
                     candidateSummary.style.borderRadius = "8px";
                     summary.appendChild(candidateSummary);
+                } else {
+                    const emptyCandidates = document.createElement("div");
+                    emptyCandidates.textContent = "No scene material target candidates match the current filters.";
+                    emptyCandidates.style.marginTop = "8px";
+                    emptyCandidates.style.opacity = "0.75";
+                    summary.appendChild(emptyCandidates);
                 }
             }
         }
@@ -483,6 +591,35 @@ export function getMmeCompatApplyStatus(state: Pick<MmeFallbackControllerState, 
     return "apply not implemented";
 }
 
+export function filterAndSortMmeTargetCandidates(
+    candidates: readonly MmeFallbackTargetCandidate[],
+    options: MmeCandidateViewOptions,
+): readonly MmeFallbackTargetCandidate[] {
+    const normalizedSearch = options.search.trim().toLowerCase();
+    const filtered = candidates.filter((candidate) => {
+        if (options.kind !== "all" && candidate.targetKind !== options.kind) return false;
+        if (options.preset !== "all" && candidate.recommendedFallbackPreset !== options.preset) return false;
+        if (options.status !== "all" && candidate.status !== options.status) return false;
+        if (normalizedSearch.length === 0) return true;
+
+        const haystack = [
+            candidate.ownerName,
+            candidate.meshName,
+            candidate.materialName,
+            candidate.effectId,
+            candidate.sourcePath,
+        ]
+            .filter((value): value is string => typeof value === "string" && value.length > 0)
+            .join("\n")
+            .toLowerCase();
+        return haystack.includes(normalizedSearch);
+    });
+
+    const sorted = [...filtered];
+    sorted.sort((left, right) => compareMmeTargetCandidates(left, right, options.sortKey));
+    return sorted;
+}
+
 function buildPreviewInputsFromManifest(manifest: MMEManifest) {
     return Object.values(manifest.parsedEffects).map((effect) => ({
         effectId: effect.path,
@@ -509,6 +646,52 @@ function summarizeTargetCandidates(candidates: readonly MmeFallbackTargetCandida
         matchingPolicy: candidate.matchingPolicy,
         warnings: candidate.warnings,
     }));
+}
+
+function compareMmeTargetCandidates(
+    left: MmeFallbackTargetCandidate,
+    right: MmeFallbackTargetCandidate,
+    sortKey: MmeCandidateSortKey,
+): number {
+    switch (sortKey) {
+    case "ownerName":
+        return compareStrings(left.ownerName, right.ownerName)
+            || compareStrings(left.materialName, right.materialName);
+    case "materialName":
+        return compareStrings(left.materialName, right.materialName)
+            || compareStrings(left.ownerName, right.ownerName);
+    case "preset":
+        return compareStrings(left.recommendedFallbackPreset, right.recommendedFallbackPreset)
+            || compareStrings(left.materialName, right.materialName);
+    case "confidenceDesc":
+    default:
+        return (right.confidence - left.confidence)
+            || compareStrings(left.ownerName, right.ownerName)
+            || compareStrings(left.materialName, right.materialName);
+    }
+}
+
+function compareStrings(left: string | null, right: string | null): number {
+    return (left ?? "").localeCompare(right ?? "");
+}
+
+function createSelectControl(
+    items: readonly { value: string; label: string }[],
+    currentValue: string,
+    onChange: (value: string) => void,
+): HTMLSelectElement {
+    const select = document.createElement("select");
+    for (const item of items) {
+        const option = document.createElement("option");
+        option.value = item.value;
+        option.textContent = item.label;
+        select.appendChild(option);
+    }
+    select.value = currentValue;
+    select.addEventListener("change", () => {
+        onChange(select.value);
+    });
+    return select;
 }
 
 function appendSummaryRow(container: HTMLElement, label: string, value: string): void {
