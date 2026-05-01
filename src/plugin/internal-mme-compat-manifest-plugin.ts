@@ -1,6 +1,8 @@
 import type { ScenePlugin } from "./plugin-types";
 import { pluginUiRegistry } from "./ui-registry";
 import { analyzeMmeEffectIR } from "./mme-effect-mapper";
+import { MmeFallbackController } from "./mme-fallback-controller";
+import { createMmeFallbackMaterial } from "./mme-fallback-material-factory";
 import { planMmeFallbackPreset } from "./mme-fallback-preset-planner";
 import {
     createMmeManifest,
@@ -29,6 +31,7 @@ export type InternalMmeCompatManifestPlugin = ScenePlugin & {
 export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManifestPlugin {
     let manifest: MMEManifest | null = null;
     const mountedContainers = new Set<HTMLElement>();
+    const fallbackController = new MmeFallbackController();
 
     const renderPanel = (container: HTMLElement): void => {
         container.replaceChildren();
@@ -62,26 +65,89 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         appendSummaryRow(summary, "Missing", String(manifest.missingFiles.length));
         appendSummaryRow(summary, "Warnings", String(manifest.warnings.length));
 
+        const controllerState = fallbackController.getState();
+        appendSummaryRow(summary, "Fallback Preview", controllerState.enabled ? "ON" : "OFF");
+        appendSummaryRow(summary, "Fallback Mode", controllerState.mode);
+        appendSummaryRow(summary, "Preview Targets", String(controllerState.plannedTargets.length));
+
+        const controls = document.createElement("div");
+        controls.style.display = "grid";
+        controls.style.gridTemplateColumns = "1fr 1fr";
+        controls.style.gap = "8px";
+        controls.style.marginTop = "8px";
+
+        const previewToggle = document.createElement("label");
+        previewToggle.style.display = "flex";
+        previewToggle.style.alignItems = "center";
+        previewToggle.style.gap = "6px";
+        const previewCheckbox = document.createElement("input");
+        previewCheckbox.type = "checkbox";
+        previewCheckbox.checked = controllerState.enabled;
+        previewCheckbox.disabled = true;
+        previewToggle.appendChild(previewCheckbox);
+        previewToggle.appendChild(document.createTextNode("Enable Preview (disabled by default)"));
+
+        const modeSelect = document.createElement("select");
+        modeSelect.disabled = true;
+        const previewOption = document.createElement("option");
+        previewOption.value = "preview";
+        previewOption.textContent = "preview";
+        const applyOption = document.createElement("option");
+        applyOption.value = "apply";
+        applyOption.textContent = "apply (TODO)";
+        modeSelect.appendChild(previewOption);
+        modeSelect.appendChild(applyOption);
+        modeSelect.value = controllerState.mode;
+
+        controls.appendChild(previewToggle);
+        controls.appendChild(modeSelect);
+        summary.appendChild(controls);
+
         const parsedEffects = Object.values(manifest.parsedEffects);
         if (parsedEffects.length > 0) {
+            fallbackController.clearPreview();
             const analyses = parsedEffects.map((effect) => ({
                 path: effect.path,
                 analysis: analyzeMmeEffectIR(effect, { manifest }),
                 plan: planMmeFallbackPreset(analyzeMmeEffectIR(effect, { manifest }), effect, { manifest }),
             }));
+            const previewPlan = fallbackController.buildPreviewPlan(parsedEffects.map((effect) => ({
+                effectId: effect.path,
+                effect,
+                targetName: effect.path.split("/").pop() ?? effect.path,
+                materialName: effect.path.split("/").pop() ?? effect.path,
+                sourcePath: effect.path,
+            })), { manifest });
             const parsedSummary = document.createElement("pre");
-            parsedSummary.textContent = JSON.stringify(analyses.map(({ path, analysis, plan }) => ({
+            parsedSummary.textContent = JSON.stringify(analyses.map(({ path, analysis, plan }) => {
+                const factoryResult = createMmeFallbackMaterial({
+                    scene: null,
+                    plan,
+                    analysis,
+                    targetMetadata: {
+                        targetName: path.split("/").pop() ?? path,
+                        sourcePath: path,
+                    },
+                    dryRun: true,
+                });
+
+                return {
                 path,
                 status: analysis.status,
                 confidence: Number(analysis.confidence.toFixed(2)),
                 fallbackPreset: plan.preset,
                 fallbackConfidence: Number(plan.confidence.toFixed(2)),
                 fallbackReasons: plan.reasons,
+                fallbackMaterialStatus: factoryResult.status,
+                fallbackMaterialType: factoryResult.materialType,
+                fallbackMaterialWarnings: factoryResult.warnings,
                 mappedFields: Object.fromEntries(Object.entries(analysis.mappedFields)
                     .filter(([, value]) => value !== null)),
                 unsupportedFeatures: plan.blockedByUnsupportedFeatures,
                 warnings: plan.warnings,
-            })), null, 2);
+                previewPlanStatus: previewPlan.find((entry) => entry.effectId === path)?.factoryStatus ?? "skipped",
+                };
+            }), null, 2);
             parsedSummary.style.margin = "8px 0 0";
             parsedSummary.style.padding = "8px";
             parsedSummary.style.maxHeight = "180px";
@@ -150,9 +216,11 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         },
         clearManifest(): void {
             manifest = null;
+            fallbackController.clearPreview();
             rerenderPanels();
         },
         onDispose(): void {
+            fallbackController.dispose();
             pluginUiRegistry.unregisterPanel("mme-compat-manifest-panel");
             mountedContainers.clear();
         },
