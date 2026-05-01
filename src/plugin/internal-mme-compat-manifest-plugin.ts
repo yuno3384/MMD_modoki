@@ -46,6 +46,11 @@ export type MmeCandidateViewOptions = {
     readonly sortKey: MmeCandidateSortKey;
 };
 
+export type MmeCandidateDetailState = {
+    readonly selectedCandidateId: string | null;
+    readonly selectedCandidate: MmeFallbackTargetCandidate | null;
+};
+
 export type InternalMmeCompatManifestPlugin = ScenePlugin & {
     getManifest(): MMEManifest | null;
     getCurrentMmeManifest(): MMEManifest | null;
@@ -80,6 +85,7 @@ export function createInternalMmeCompatManifestPlugin(
     const fallbackController = new MmeFallbackController();
     let lastPickerWarnings: string[] = [];
     let lastPickerAcceptedCount = 0;
+    let selectedCandidateId: string | null = null;
     let candidateViewOptions: MmeCandidateViewOptions = {
         kind: "all",
         preset: "all",
@@ -93,6 +99,7 @@ export function createInternalMmeCompatManifestPlugin(
         registeredFiles.clear();
         lastPickerWarnings = [];
         lastPickerAcceptedCount = 0;
+        selectedCandidateId = null;
         fallbackController.setEnabled(false);
         fallbackController.setExperimentalApplyEnabled(false);
         rerenderPanels();
@@ -206,6 +213,7 @@ export function createInternalMmeCompatManifestPlugin(
                 fallbackController.setEnabled(true);
             } else {
                 fallbackController.setEnabled(false);
+                selectedCandidateId = null;
             }
             rerenderPanels();
         });
@@ -380,9 +388,45 @@ export function createInternalMmeCompatManifestPlugin(
                 summary.appendChild(searchInput);
 
                 const visibleCandidates = filterAndSortMmeTargetCandidates(targetCandidates, candidateViewOptions);
+                selectedCandidateId = syncSelectedMmeTargetCandidateId(selectedCandidateId, visibleCandidates);
+                const selectedCandidateDetail = getSelectedMmeTargetCandidateDetail(visibleCandidates, selectedCandidateId);
                 appendSummaryRow(summary, "Visible Candidates", String(visibleCandidates.length));
 
                 if (visibleCandidates.length > 0) {
+                    const candidateList = document.createElement("div");
+                    candidateList.style.display = "grid";
+                    candidateList.style.gap = "6px";
+                    candidateList.style.marginTop = "8px";
+                    candidateList.style.maxHeight = "180px";
+                    candidateList.style.overflow = "auto";
+
+                    for (const candidate of visibleCandidates) {
+                        const candidateButton = document.createElement("button");
+                        candidateButton.type = "button";
+                        candidateButton.style.textAlign = "left";
+                        candidateButton.style.padding = "8px";
+                        candidateButton.style.borderRadius = "8px";
+                        candidateButton.style.border = selectedCandidateId === candidate.targetId
+                            ? "1px solid rgba(96, 165, 250, 0.9)"
+                            : "1px solid rgba(148, 163, 184, 0.3)";
+                        candidateButton.style.background = selectedCandidateId === candidate.targetId
+                            ? "rgba(59, 130, 246, 0.16)"
+                            : "rgba(15, 23, 42, 0.18)";
+                        candidateButton.textContent = [
+                            candidate.ownerName ?? "(unknown owner)",
+                            candidate.meshName,
+                            candidate.materialName,
+                            `${candidate.recommendedFallbackPreset} / ${candidate.status}`,
+                        ].join(" | ");
+                        candidateButton.addEventListener("click", () => {
+                            selectedCandidateId = candidate.targetId;
+                            rerenderPanels();
+                        });
+                        candidateList.appendChild(candidateButton);
+                    }
+
+                    summary.appendChild(candidateList);
+
                     const candidateSummary = document.createElement("pre");
                     candidateSummary.textContent = JSON.stringify(summarizeTargetCandidates(visibleCandidates), null, 2);
                     candidateSummary.style.margin = "8px 0 0";
@@ -393,7 +437,46 @@ export function createInternalMmeCompatManifestPlugin(
                     candidateSummary.style.background = "rgba(15, 23, 42, 0.24)";
                     candidateSummary.style.borderRadius = "8px";
                     summary.appendChild(candidateSummary);
+
+                    const detailLabel = document.createElement("div");
+                    detailLabel.style.marginTop = "8px";
+                    detailLabel.style.fontSize = "12px";
+                    detailLabel.style.opacity = "0.75";
+                    detailLabel.textContent = "Selected candidate detail. Read-only dry-run only; not applied.";
+                    summary.appendChild(detailLabel);
+
+                    if (selectedCandidateDetail.selectedCandidate) {
+                        const detail = document.createElement("pre");
+                        detail.textContent = JSON.stringify({
+                            targetId: selectedCandidateDetail.selectedCandidate.targetId,
+                            ownerName: selectedCandidateDetail.selectedCandidate.ownerName,
+                            meshName: selectedCandidateDetail.selectedCandidate.meshName,
+                            materialName: selectedCandidateDetail.selectedCandidate.materialName,
+                            effectId: selectedCandidateDetail.selectedCandidate.effectId,
+                            recommendedPreset: selectedCandidateDetail.selectedCandidate.recommendedFallbackPreset,
+                            confidence: Number(selectedCandidateDetail.selectedCandidate.confidence.toFixed(2)),
+                            status: selectedCandidateDetail.selectedCandidate.status,
+                            matchingPolicy: selectedCandidateDetail.selectedCandidate.matchingPolicy,
+                            warnings: selectedCandidateDetail.selectedCandidate.warnings,
+                            blockedReasons: selectedCandidateDetail.selectedCandidate.blockedReasons,
+                        }, null, 2);
+                        detail.style.margin = "8px 0 0";
+                        detail.style.padding = "8px";
+                        detail.style.maxHeight = "180px";
+                        detail.style.overflow = "auto";
+                        detail.style.whiteSpace = "pre-wrap";
+                        detail.style.background = "rgba(15, 23, 42, 0.24)";
+                        detail.style.borderRadius = "8px";
+                        summary.appendChild(detail);
+                    } else {
+                        const inactiveDetail = document.createElement("div");
+                        inactiveDetail.style.marginTop = "8px";
+                        inactiveDetail.style.opacity = "0.75";
+                        inactiveDetail.textContent = "No candidate selected.";
+                        summary.appendChild(inactiveDetail);
+                    }
                 } else {
+                    selectedCandidateId = null;
                     const emptyCandidates = document.createElement("div");
                     emptyCandidates.textContent = "No scene material target candidates match the current filters.";
                     emptyCandidates.style.marginTop = "8px";
@@ -618,6 +701,34 @@ export function filterAndSortMmeTargetCandidates(
     const sorted = [...filtered];
     sorted.sort((left, right) => compareMmeTargetCandidates(left, right, options.sortKey));
     return sorted;
+}
+
+export function getSelectedMmeTargetCandidateDetail(
+    candidates: readonly MmeFallbackTargetCandidate[],
+    selectedCandidateId: string | null,
+): MmeCandidateDetailState {
+    if (!selectedCandidateId) {
+        return {
+            selectedCandidateId: null,
+            selectedCandidate: null,
+        };
+    }
+
+    const selectedCandidate = candidates.find((candidate) => candidate.targetId === selectedCandidateId) ?? null;
+    return {
+        selectedCandidateId: selectedCandidate?.targetId ?? null,
+        selectedCandidate,
+    };
+}
+
+export function syncSelectedMmeTargetCandidateId(
+    selectedCandidateId: string | null,
+    candidates: readonly MmeFallbackTargetCandidate[],
+): string | null {
+    if (!selectedCandidateId) return null;
+    return candidates.some((candidate) => candidate.targetId === selectedCandidateId)
+        ? selectedCandidateId
+        : null;
 }
 
 function buildPreviewInputsFromManifest(manifest: MMEManifest) {

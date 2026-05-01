@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
     createInternalMmeCompatManifestPlugin,
     filterAndSortMmeTargetCandidates,
+    getSelectedMmeTargetCandidateDetail,
     getMmeCompatApplyStatus,
     getMmeFilePathFromPickerFile,
     registerPickedMmeFiles,
+    syncSelectedMmeTargetCandidateId,
 } from "./internal-mme-compat-manifest-plugin";
 import type { SceneHookContext } from "./plugin-types";
 import type { MmeFallbackTargetCandidate } from "./mme-fallback-controller";
@@ -70,6 +72,31 @@ describe("InternalMmeCompatManifestPlugin", () => {
             "BodyMaterial",
             "FaceMaterial",
         ]);
+    });
+
+    it("finds a selected candidate by id without mutating candidates", () => {
+        const candidates = createCandidateFixtures();
+        const originalSnapshot = [...candidates];
+
+        const detail = getSelectedMmeTargetCandidateDetail(candidates, "accessory-body");
+
+        expect(detail.selectedCandidateId).toBe("accessory-body");
+        expect(detail.selectedCandidate?.materialName).toBe("AccessoryBodyMaterial");
+        expect(candidates).toEqual(originalSnapshot);
+    });
+
+    it("clears selection when the candidate is no longer visible under current filters", () => {
+        const candidates = createCandidateFixtures();
+        const visibleCandidates = filterAndSortMmeTargetCandidates(candidates, {
+            kind: "model",
+            preset: "all",
+            status: "all",
+            search: "",
+            sortKey: "confidenceDesc",
+        });
+
+        expect(syncSelectedMmeTargetCandidateId("accessory-body", visibleCandidates)).toBeNull();
+        expect(syncSelectedMmeTargetCandidateId("model-body", visibleCandidates)).toBe("model-body");
     });
 
     it("formats apply status with the experimental gate priority", () => {
