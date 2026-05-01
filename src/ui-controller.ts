@@ -33,6 +33,7 @@ import { ModelEdgeController } from "./ui/model-edge-controller";
 import { RuntimeFeatureUiController } from "./ui/runtime-feature-ui-controller";
 import { SceneEnvironmentUiController } from "./ui/scene-environment-ui-controller";
 import { ShaderPanelController } from "./ui/shader-panel-controller";
+import { pluginUiRegistry, type PluginUiPanel } from "./plugin/ui-registry";
 
 type SectionKeyframeButtonState = "none" | "dirty" | "registered";
 type SectionKeyframeSection = "info" | "interpolation" | "bone" | "morph" | "accessory";
@@ -241,6 +242,8 @@ export class UIController {
     private runtimeFeatureUiController: RuntimeFeatureUiController | null = null;
     private sceneEnvironmentUiController: SceneEnvironmentUiController | null = null;
     private shaderPanelController: ShaderPanelController | null = null;
+    private pluginPanelHost: HTMLElement | null = null;
+    private readonly mountedPluginPanels = new Map<string, PluginUiPanel>();
     private postFxWgslToonPath: string | null = null;
     private postFxWgslToonText: string | null = null;
     private currentProjectFilePath: string | null = null;
@@ -438,6 +441,7 @@ export class UIController {
         this.runtimeFeatureUiController?.refresh();
         this.updateInfoActionButtons();
         this.refreshShaderPanel();
+        this.mountPluginPanels();
         this.installRangeNumberInputs();
         void this.shaderPanelController.reloadBundledWgslShaderFiles();
         this.updateTimelineEditState();
@@ -452,10 +456,87 @@ export class UIController {
                 event.returnValue = "";
                 return;
             }
+            this.unmountPluginPanels();
             this.exportUiController?.dispose();
             this.layoutUiController?.dispose();
             document.removeEventListener("app:locale-changed", this.onLocaleChanged as EventListener);
         });
+    }
+
+    /**
+     * Minimal plugin UI mount point.
+     *
+     * This keeps plugin UI isolated to a dedicated container without changing
+     * the existing core controller layout. Future expansion may move these
+     * panels into more specialized regions once the plugin API grows.
+     */
+    private mountPluginPanels(): void {
+        const panels = pluginUiRegistry.getPanels();
+        if (panels.length === 0) {
+            return;
+        }
+
+        const anchorParent = this.shaderMaterialList?.parentElement;
+        if (!anchorParent || !this.shaderMaterialList) {
+            return;
+        }
+
+        if (!this.pluginPanelHost) {
+            const host = document.createElement("div");
+            host.dataset.pluginUiHost = "panels";
+            host.style.display = "grid";
+            host.style.gap = "12px";
+            host.style.marginTop = "12px";
+            anchorParent.insertBefore(host, this.shaderMaterialList.nextSibling);
+            this.pluginPanelHost = host;
+        }
+
+        for (const panel of panels) {
+            if (this.mountedPluginPanels.has(panel.id)) {
+                continue;
+            }
+
+            const panelRoot = document.createElement("section");
+            panelRoot.dataset.pluginPanelId = panel.id;
+            panelRoot.style.border = "1px solid rgba(148, 163, 184, 0.2)";
+            panelRoot.style.borderRadius = "10px";
+            panelRoot.style.padding = "12px";
+            panelRoot.style.background = "rgba(15, 23, 42, 0.18)";
+
+            const title = document.createElement("div");
+            title.textContent = panel.title;
+            title.style.fontSize = "12px";
+            title.style.fontWeight = "600";
+            title.style.marginBottom = "8px";
+            title.style.letterSpacing = "0.04em";
+            panelRoot.appendChild(title);
+
+            const content = document.createElement("div");
+            content.dataset.pluginPanelMount = panel.id;
+            panelRoot.appendChild(content);
+            this.pluginPanelHost.appendChild(panelRoot);
+
+            try {
+                panel.mount(content);
+                this.mountedPluginPanels.set(panel.id, panel);
+            } catch (error) {
+                console.error(`[PluginUiRegistry] Failed to mount panel "${panel.id}"`, error);
+                panelRoot.remove();
+            }
+        }
+    }
+
+    private unmountPluginPanels(): void {
+        for (const [panelId, panel] of this.mountedPluginPanels) {
+            try {
+                panel.unmount?.();
+            } catch (error) {
+                console.error(`[PluginUiRegistry] Failed to unmount panel "${panelId}"`, error);
+            }
+        }
+        this.mountedPluginPanels.clear();
+        this.pluginPanelHost?.remove();
+        this.pluginPanelHost = null;
     }
 
     private setupEventListeners(): void {
