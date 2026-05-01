@@ -15,6 +15,18 @@ export type MmeFileRegistrationResult = {
     reason?: "unsupported-extension";
 };
 
+type MmePickerFileLike = {
+    readonly name: string;
+    readonly webkitRelativePath?: string;
+    text(): Promise<string>;
+};
+
+export type MmePickerRegistrationSummary = {
+    readonly acceptedCount: number;
+    readonly rejectedCount: number;
+    readonly warnings: readonly string[];
+};
+
 export type InternalMmeCompatManifestPlugin = ScenePlugin & {
     getManifest(): MMEManifest | null;
     getCurrentMmeManifest(): MMEManifest | null;
@@ -41,12 +53,26 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
     const registeredFiles = new Map<string, MmeCompatFileEntry>();
     const mountedContainers = new Set<HTMLElement>();
     const fallbackController = new MmeFallbackController();
+    let lastPickerWarnings: string[] = [];
+    let lastPickerAcceptedCount = 0;
 
     const clearCurrentManifest = (): void => {
         manifest = null;
         registeredFiles.clear();
+        lastPickerWarnings = [];
+        lastPickerAcceptedCount = 0;
         fallbackController.clearPreview();
         fallbackController.clearApplyPlan();
+        rerenderPanels();
+    };
+
+    const handleSelectedMmeFiles = async (files: readonly MmePickerFileLike[]): Promise<void> => {
+        const summary = await registerPickedMmeFiles({
+            files,
+            registerMmeFile: (file) => pluginApi.registerMmeFile(file),
+        });
+        lastPickerAcceptedCount = registeredFiles.size;
+        lastPickerWarnings = [...summary.warnings];
         rerenderPanels();
     };
 
@@ -57,6 +83,43 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         summary.style.display = "grid";
         summary.style.gap = "6px";
         summary.style.fontSize = "12px";
+
+        const pickerSection = document.createElement("div");
+        pickerSection.style.display = "grid";
+        pickerSection.style.gap = "6px";
+        pickerSection.style.marginBottom = "8px";
+
+        const pickerLabel = document.createElement("div");
+        pickerLabel.textContent = "MME file registration (.x, .fx, .fxsub, .conf)";
+        pickerLabel.style.fontWeight = "600";
+        pickerSection.appendChild(pickerLabel);
+
+        const pickerInput = document.createElement("input");
+        pickerInput.type = "file";
+        pickerInput.accept = ".x,.fx,.fxsub,.conf";
+        pickerInput.multiple = true;
+        pickerInput.addEventListener("change", () => {
+            const selectedFiles = Array.from(pickerInput.files ?? []);
+            void handleSelectedMmeFiles(selectedFiles as readonly MmePickerFileLike[]);
+            pickerInput.value = "";
+        });
+        pickerSection.appendChild(pickerInput);
+
+        appendSummaryRow(pickerSection, "Registered Files", String(lastPickerAcceptedCount));
+        if (lastPickerWarnings.length > 0) {
+            const warningBlock = document.createElement("pre");
+            warningBlock.textContent = lastPickerWarnings.join("\n");
+            warningBlock.style.margin = "0";
+            warningBlock.style.padding = "8px";
+            warningBlock.style.maxHeight = "100px";
+            warningBlock.style.overflow = "auto";
+            warningBlock.style.whiteSpace = "pre-wrap";
+            warningBlock.style.background = "rgba(120, 53, 15, 0.18)";
+            warningBlock.style.borderRadius = "8px";
+            pickerSection.appendChild(warningBlock);
+        }
+
+        summary.appendChild(pickerSection);
 
         if (!manifest) {
             const empty = document.createElement("div");
@@ -223,7 +286,7 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         console.error(`[MMECompat] Failed to register UI panel: ${panelRegistration.id}`);
     }
 
-    return {
+    const pluginApi: InternalMmeCompatManifestPlugin = {
         id: "mme-compat-manifest",
         getManifest(): MMEManifest | null {
             return manifest;
@@ -257,6 +320,7 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
             manifest = selectedRootFile
                 ? createMmeManifest(selectedRootFile, Array.from(registeredFiles.values()))
                 : null;
+            lastPickerAcceptedCount = registeredFiles.size;
             rerenderPanels();
             return {
                 ok: true,
@@ -275,6 +339,8 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
             mountedContainers.clear();
         },
     };
+
+    return pluginApi;
 }
 
 function normalizeRegisteredMmeFile(file: MmeCompatFileEntry): MmeCompatFileEntry {
@@ -305,6 +371,48 @@ function selectRegisteredRootFile(files: readonly MmeCompatFileEntry[]): string 
     }
 
     return null;
+}
+
+export function getMmeFilePathFromPickerFile(file: Pick<MmePickerFileLike, "name" | "webkitRelativePath">): string {
+    const preferredPath = typeof file.webkitRelativePath === "string" && file.webkitRelativePath.trim().length > 0
+        ? file.webkitRelativePath
+        : file.name;
+    return preferredPath;
+}
+
+export async function registerPickedMmeFiles(params: {
+    files: readonly MmePickerFileLike[];
+    registerMmeFile: (file: MmeCompatFileEntry) => MmeFileRegistrationResult;
+}): Promise<MmePickerRegistrationSummary> {
+    const warnings: string[] = [];
+    let acceptedCount = 0;
+    let rejectedCount = 0;
+
+    for (const file of params.files) {
+        const path = getMmeFilePathFromPickerFile(file);
+        const text = await file.text();
+        const result = params.registerMmeFile({
+            path,
+            text,
+        });
+        if (result.ok) {
+            acceptedCount += 1;
+            continue;
+        }
+
+        rejectedCount += 1;
+        if (result.reason === "unsupported-extension") {
+            warnings.push(`Unsupported MME file skipped: ${path}`);
+        } else {
+            warnings.push(`MME file registration failed: ${path}`);
+        }
+    }
+
+    return {
+        acceptedCount,
+        rejectedCount,
+        warnings,
+    };
 }
 
 function appendSummaryRow(container: HTMLElement, label: string, value: string): void {

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createInternalMmeCompatManifestPlugin } from "./internal-mme-compat-manifest-plugin";
+import {
+    createInternalMmeCompatManifestPlugin,
+    getMmeFilePathFromPickerFile,
+    registerPickedMmeFiles,
+} from "./internal-mme-compat-manifest-plugin";
 import type { SceneHookContext } from "./plugin-types";
 
 const TEST_SCENE_CONTEXT: SceneHookContext = {
@@ -15,6 +19,101 @@ const TEST_SCENE_CONTEXT: SceneHookContext = {
 };
 
 describe("InternalMmeCompatManifestPlugin", () => {
+    it("prefers webkitRelativePath for picked files when available", () => {
+        expect(getMmeFilePathFromPickerFile({
+            name: "main.fx",
+            webkitRelativePath: "bundle/main.fx",
+        })).toBe("bundle/main.fx");
+
+        expect(getMmeFilePathFromPickerFile({
+            name: "fallback.fx",
+            webkitRelativePath: "",
+        })).toBe("fallback.fx");
+    });
+
+    it("accepted picked files pass registration", async () => {
+        const registeredPaths: string[] = [];
+        const summary = await registerPickedMmeFiles({
+            files: [
+                {
+                    name: "main.fx",
+                    async text() {
+                        return `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`;
+                    },
+                },
+            ],
+            registerMmeFile(file) {
+                registeredPaths.push(file.path);
+                return {
+                    ok: true,
+                    manifest: null,
+                };
+            },
+        });
+
+        expect(registeredPaths).toEqual(["main.fx"]);
+        expect(summary).toEqual({
+            acceptedCount: 1,
+            rejectedCount: 0,
+            warnings: [],
+        });
+    });
+
+    it("picked unsupported files produce safe warnings", async () => {
+        const summary = await registerPickedMmeFiles({
+            files: [
+                {
+                    name: "notes.txt",
+                    async text() {
+                        return "unsupported";
+                    },
+                },
+            ],
+            registerMmeFile() {
+                return {
+                    ok: false,
+                    manifest: null,
+                    reason: "unsupported-extension",
+                };
+            },
+        });
+
+        expect(summary.acceptedCount).toBe(0);
+        expect(summary.rejectedCount).toBe(1);
+        expect(summary.warnings).toEqual(["Unsupported MME file skipped: notes.txt"]);
+    });
+
+    it("picked multiple files preserve relative bundle paths where available", async () => {
+        const registeredPaths: string[] = [];
+        await registerPickedMmeFiles({
+            files: [
+                {
+                    name: "ray.x",
+                    webkitRelativePath: "bundle/ray.x",
+                    async text() {
+                        return "xof 0303txt 0032";
+                    },
+                },
+                {
+                    name: "ray.fx",
+                    webkitRelativePath: "bundle/ray.fx",
+                    async text() {
+                        return `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`;
+                    },
+                },
+            ],
+            registerMmeFile(file) {
+                registeredPaths.push(file.path);
+                return {
+                    ok: true,
+                    manifest: null,
+                };
+            },
+        });
+
+        expect(registeredPaths).toEqual(["bundle/ray.x", "bundle/ray.fx"]);
+    });
+
     it("normalizes duplicate path spellings to one registered file", () => {
         const plugin = createInternalMmeCompatManifestPlugin();
 
