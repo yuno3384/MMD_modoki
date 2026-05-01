@@ -3,14 +3,24 @@ import { pluginUiRegistry } from "./ui-registry";
 import { MmeFallbackController } from "./mme-fallback-controller";
 import {
     createMmeManifest,
+    getMmeFileKind,
     type MMEManifest,
     type MmeCompatFileEntry,
 } from "./mme-compat-manifest";
 
+export type MmeFileRegistrationResult = {
+    ok: boolean;
+    manifest: MMEManifest | null;
+    reason?: "unsupported-extension";
+};
+
 export type InternalMmeCompatManifestPlugin = ScenePlugin & {
     getManifest(): MMEManifest | null;
+    getCurrentMmeManifest(): MMEManifest | null;
     discoverManifest(rootFile: string, files: readonly MmeCompatFileEntry[]): MMEManifest;
+    registerMmeFile(file: MmeCompatFileEntry): MmeFileRegistrationResult;
     clearManifest(): void;
+    clearMmeManifest(): void;
 };
 
 /**
@@ -27,8 +37,19 @@ export type InternalMmeCompatManifestPlugin = ScenePlugin & {
  */
 export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManifestPlugin {
     let manifest: MMEManifest | null = null;
+    let currentRootFile: string | null = null;
+    const registeredFiles = new Map<string, MmeCompatFileEntry>();
     const mountedContainers = new Set<HTMLElement>();
     const fallbackController = new MmeFallbackController();
+
+    const clearCurrentManifest = (): void => {
+        manifest = null;
+        currentRootFile = null;
+        registeredFiles.clear();
+        fallbackController.clearPreview();
+        fallbackController.clearApplyPlan();
+        rerenderPanels();
+    };
 
     const renderPanel = (container: HTMLElement): void => {
         container.replaceChildren();
@@ -45,7 +66,7 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
             summary.appendChild(empty);
 
             const note = document.createElement("div");
-            note.textContent = "Future file-loading paths will call discoverManifest(...) for .x/.fx bundles.";
+            note.textContent = "Future file-loading paths can call registerMmeFile(...) or discoverManifest(...) for .x/.fx bundles.";
             note.style.opacity = "0.65";
             summary.appendChild(note);
 
@@ -208,16 +229,46 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         getManifest(): MMEManifest | null {
             return manifest;
         },
+        getCurrentMmeManifest(): MMEManifest | null {
+            return manifest;
+        },
         discoverManifest(rootFile: string, files: readonly MmeCompatFileEntry[]): MMEManifest {
+            currentRootFile = rootFile;
+            registeredFiles.clear();
+            for (const file of files) {
+                registeredFiles.set(file.path, file);
+            }
             manifest = createMmeManifest(rootFile, files);
             rerenderPanels();
             return manifest;
         },
-        clearManifest(): void {
-            manifest = null;
-            fallbackController.clearPreview();
-            fallbackController.clearApplyPlan();
+        registerMmeFile(file: MmeCompatFileEntry): MmeFileRegistrationResult {
+            const fileKind = getMmeFileKind(file.path);
+            if (fileKind !== "x" && fileKind !== "fx" && fileKind !== "fxsub" && fileKind !== "conf") {
+                return {
+                    ok: false,
+                    manifest,
+                    reason: "unsupported-extension",
+                };
+            }
+
+            registeredFiles.set(file.path, file);
+            if (currentRootFile === null) {
+                currentRootFile = file.path;
+            }
+
+            manifest = createMmeManifest(currentRootFile, Array.from(registeredFiles.values()));
             rerenderPanels();
+            return {
+                ok: true,
+                manifest,
+            };
+        },
+        clearManifest(): void {
+            clearCurrentManifest();
+        },
+        clearMmeManifest(): void {
+            clearCurrentManifest();
         },
         onDispose(): void {
             fallbackController.dispose();
