@@ -1,8 +1,10 @@
 import type { ScenePlugin } from "./plugin-types";
 import { pluginUiRegistry } from "./ui-registry";
 import {
+    buildHighlightPlanForCandidate,
     MmeFallbackController,
     type MmeFallbackControllerState,
+    type MmeFallbackHighlightPlan,
     type MmeFallbackTargetCandidate,
 } from "./mme-fallback-controller";
 import {
@@ -49,6 +51,10 @@ export type MmeCandidateViewOptions = {
 export type MmeCandidateDetailState = {
     readonly selectedCandidateId: string | null;
     readonly selectedCandidate: MmeFallbackTargetCandidate | null;
+};
+
+export type MmeCandidateHighlightDetailState = MmeCandidateDetailState & {
+    readonly highlightPlan: MmeFallbackHighlightPlan;
 };
 
 export type InternalMmeCompatManifestPlugin = ScenePlugin & {
@@ -389,7 +395,7 @@ export function createInternalMmeCompatManifestPlugin(
 
                 const visibleCandidates = filterAndSortMmeTargetCandidates(targetCandidates, candidateViewOptions);
                 selectedCandidateId = syncSelectedMmeTargetCandidateId(selectedCandidateId, visibleCandidates);
-                const selectedCandidateDetail = getSelectedMmeTargetCandidateDetail(visibleCandidates, selectedCandidateId);
+                const selectedCandidateDetail = getSelectedMmeTargetCandidateHighlightDetail(visibleCandidates, selectedCandidateId);
                 appendSummaryRow(summary, "Visible Candidates", String(visibleCandidates.length));
 
                 if (visibleCandidates.length > 0) {
@@ -468,6 +474,41 @@ export function createInternalMmeCompatManifestPlugin(
                         detail.style.background = "rgba(15, 23, 42, 0.24)";
                         detail.style.borderRadius = "8px";
                         summary.appendChild(detail);
+
+                        const highlightLabel = document.createElement("div");
+                        highlightLabel.style.marginTop = "8px";
+                        highlightLabel.style.fontSize = "12px";
+                        highlightLabel.style.opacity = "0.75";
+                        highlightLabel.textContent = "Highlight plan. Planned only; target identity may be known, but highlight remains disabled unless effect binding is precise enough. No scene changes are performed.";
+                        summary.appendChild(highlightLabel);
+
+                        const highlightDetail = document.createElement("pre");
+                        highlightDetail.textContent = JSON.stringify({
+                            selectedCandidateId: selectedCandidateDetail.highlightPlan.selectedCandidateId,
+                            targetId: selectedCandidateDetail.highlightPlan.targetId,
+                            targetKind: selectedCandidateDetail.highlightPlan.targetKind,
+                            ownerName: selectedCandidateDetail.highlightPlan.ownerName,
+                            meshName: selectedCandidateDetail.highlightPlan.meshName,
+                            materialName: selectedCandidateDetail.highlightPlan.materialName,
+                            highlightable: selectedCandidateDetail.highlightPlan.highlightable,
+                            reason: selectedCandidateDetail.highlightPlan.reason,
+                            warnings: selectedCandidateDetail.highlightPlan.warnings,
+                        }, null, 2);
+                        highlightDetail.style.margin = "8px 0 0";
+                        highlightDetail.style.padding = "8px";
+                        highlightDetail.style.maxHeight = "160px";
+                        highlightDetail.style.overflow = "auto";
+                        highlightDetail.style.whiteSpace = "pre-wrap";
+                        highlightDetail.style.background = "rgba(15, 23, 42, 0.24)";
+                        highlightDetail.style.borderRadius = "8px";
+                        summary.appendChild(highlightDetail);
+
+                        const highlightButton = document.createElement("button");
+                        highlightButton.type = "button";
+                        highlightButton.disabled = true;
+                        highlightButton.textContent = "Highlight Target (TODO)";
+                        highlightButton.style.marginTop = "4px";
+                        summary.appendChild(highlightButton);
                     } else {
                         const inactiveDetail = document.createElement("div");
                         inactiveDetail.style.marginTop = "8px";
@@ -718,6 +759,17 @@ export function getSelectedMmeTargetCandidateDetail(
     return {
         selectedCandidateId: selectedCandidate?.targetId ?? null,
         selectedCandidate,
+    };
+}
+
+export function getSelectedMmeTargetCandidateHighlightDetail(
+    candidates: readonly MmeFallbackTargetCandidate[],
+    selectedCandidateId: string | null,
+): MmeCandidateHighlightDetailState {
+    const detail = getSelectedMmeTargetCandidateDetail(candidates, selectedCandidateId);
+    return {
+        ...detail,
+        highlightPlan: buildHighlightPlanForCandidate(detail.selectedCandidate),
     };
 }
 

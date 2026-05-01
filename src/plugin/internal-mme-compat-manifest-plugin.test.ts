@@ -4,6 +4,7 @@ import {
     createInternalMmeCompatManifestPlugin,
     filterAndSortMmeTargetCandidates,
     getSelectedMmeTargetCandidateDetail,
+    getSelectedMmeTargetCandidateHighlightDetail,
     getMmeCompatApplyStatus,
     getMmeFilePathFromPickerFile,
     registerPickedMmeFiles,
@@ -97,6 +98,42 @@ describe("InternalMmeCompatManifestPlugin", () => {
 
         expect(syncSelectedMmeTargetCandidateId("accessory-body", visibleCandidates)).toBeNull();
         expect(syncSelectedMmeTargetCandidateId("model-body", visibleCandidates)).toBe("model-body");
+    });
+
+    it("treats a single-global-effect candidate as highlightable when target identity is clear", () => {
+        const candidates = createCandidateFixtures();
+        const originalSnapshot = [...candidates];
+
+        const detail = getSelectedMmeTargetCandidateHighlightDetail(candidates, "model-body");
+
+        expect(detail.selectedCandidateId).toBe("model-body");
+        expect(detail.highlightPlan.highlightable).toBe(true);
+        expect(detail.highlightPlan.reason).toBe("target-identity-clear");
+        expect(detail.highlightPlan.meshName).toBe("BodyMesh");
+        expect(candidates).toEqual(originalSnapshot);
+    });
+
+    it("returns a conservative non-highlightable plan for multi-global and unmatched candidates", () => {
+        const candidates = createCandidateFixtures();
+
+        const multiGlobalDetail = getSelectedMmeTargetCandidateHighlightDetail(candidates, "accessory-body");
+        const unmatchedDetail = getSelectedMmeTargetCandidateHighlightDetail(candidates, "model-face");
+
+        expect(multiGlobalDetail.highlightPlan.highlightable).toBe(false);
+        expect(multiGlobalDetail.highlightPlan.reason).toBe("effect-binding-not-precise");
+        expect(unmatchedDetail.highlightPlan.highlightable).toBe(false);
+        expect(unmatchedDetail.highlightPlan.reason).toBe("candidate-unmatched");
+    });
+
+    it("returns a safe empty highlight plan when the selected candidate is missing", () => {
+        const candidates = createCandidateFixtures();
+
+        const detail = getSelectedMmeTargetCandidateHighlightDetail(candidates, "missing-target");
+
+        expect(detail.selectedCandidate).toBeNull();
+        expect(detail.highlightPlan.highlightable).toBe(false);
+        expect(detail.highlightPlan.reason).toBe("candidate-missing");
+        expect(detail.highlightPlan.targetId).toBeNull();
     });
 
     it("formats apply status with the experimental gate priority", () => {

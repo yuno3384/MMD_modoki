@@ -104,6 +104,18 @@ export type MmeFallbackTargetCandidate = {
     readonly matchingPolicy: "single-global-effect" | "multi-global-effect" | "unmatched";
 };
 
+export type MmeFallbackHighlightPlan = {
+    readonly selectedCandidateId: string | null;
+    readonly targetId: string | null;
+    readonly targetKind: MaterialEffectTarget["kind"] | null;
+    readonly ownerName: string | null;
+    readonly meshName: string | null;
+    readonly materialName: string | null;
+    readonly highlightable: boolean;
+    readonly reason: string;
+    readonly warnings: readonly string[];
+};
+
 export class MmeFallbackController {
     private enabled = false;
     private mode: MmeFallbackControllerMode = "preview";
@@ -407,6 +419,87 @@ export class MmeFallbackController {
     private createTransactionId(): string {
         return `mme-fallback-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     }
+}
+
+export function buildHighlightPlanForCandidate(
+    candidate: MmeFallbackTargetCandidate | null | undefined,
+): MmeFallbackHighlightPlan {
+    if (!candidate) {
+        return {
+            selectedCandidateId: null,
+            targetId: null,
+            targetKind: null,
+            ownerName: null,
+            meshName: null,
+            materialName: null,
+            highlightable: false,
+            reason: "candidate-missing",
+            warnings: ["No selected candidate is available for highlight planning."],
+        };
+    }
+
+    if (candidate.matchingPolicy === "unmatched") {
+        return {
+            selectedCandidateId: candidate.targetId,
+            targetId: candidate.targetId,
+            targetKind: candidate.targetKind,
+            ownerName: candidate.ownerName,
+            meshName: candidate.meshName,
+            materialName: candidate.materialName,
+            highlightable: false,
+            reason: "candidate-unmatched",
+            warnings: [
+                "This candidate is unmatched, so there is no precise fallback effect association to highlight yet.",
+                ...candidate.warnings,
+            ],
+        };
+    }
+
+    if (candidate.matchingPolicy === "multi-global-effect") {
+        return {
+            selectedCandidateId: candidate.targetId,
+            targetId: candidate.targetId,
+            targetKind: candidate.targetKind,
+            ownerName: candidate.ownerName,
+            meshName: candidate.meshName,
+            materialName: candidate.materialName,
+            highlightable: false,
+            reason: "effect-binding-not-precise",
+            warnings: [
+                "This candidate is associated with multiple global effect candidates, so highlight targeting is intentionally blocked until a more precise binding exists.",
+                ...candidate.warnings,
+            ],
+        };
+    }
+
+    if (candidate.matchingPolicy !== "single-global-effect") {
+        return {
+            selectedCandidateId: candidate.targetId,
+            targetId: candidate.targetId,
+            targetKind: candidate.targetKind,
+            ownerName: candidate.ownerName,
+            meshName: candidate.meshName,
+            materialName: candidate.materialName,
+            highlightable: false,
+            reason: "effect-binding-not-precise",
+            warnings: [
+                "This candidate does not have a precise enough effect binding for highlight planning yet.",
+                ...candidate.warnings,
+            ],
+        };
+    }
+
+    return {
+        selectedCandidateId: candidate.targetId,
+        targetId: candidate.targetId,
+        targetKind: candidate.targetKind,
+        ownerName: candidate.ownerName,
+        meshName: candidate.meshName,
+        materialName: candidate.materialName,
+        highlightable: true,
+        reason: "target-identity-clear",
+        warnings: [...candidate.warnings],
+    };
 }
 
 function getTargetOwnerName(target: MaterialEffectTarget): string | null {
