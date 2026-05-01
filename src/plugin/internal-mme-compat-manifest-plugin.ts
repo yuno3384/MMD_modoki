@@ -62,8 +62,6 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
         lastPickerWarnings = [];
         lastPickerAcceptedCount = 0;
         fallbackController.setEnabled(false);
-        fallbackController.clearPreview();
-        fallbackController.clearApplyPlan();
         rerenderPanels();
     };
 
@@ -173,12 +171,8 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
             fallbackController.setMode("preview");
             if (previewCheckbox.checked) {
                 fallbackController.setEnabled(true);
-                if (manifest) {
-                    fallbackController.buildPreviewPlan(buildPreviewInputsFromManifest(manifest), { manifest });
-                }
             } else {
                 fallbackController.setEnabled(false);
-                fallbackController.clearPreview();
             }
             rerenderPanels();
         });
@@ -242,8 +236,6 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
                 parsedSummary.style.background = "rgba(15, 23, 42, 0.24)";
                 parsedSummary.style.borderRadius = "8px";
                 summary.appendChild(parsedSummary);
-            } else {
-                fallbackController.clearPreview();
             }
         }
 

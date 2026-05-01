@@ -116,6 +116,32 @@ technique Post {
         expect(input.materialName).toBe("mat_body");
     });
 
+    it("disabling the controller clears the apply plan through the shared cleanup path", () => {
+        const controller = new MmeFallbackController();
+
+        controller.planApply([
+            {
+                effectId: "basic",
+                materialName: "mat_body",
+                effect: parseMmeEffectFile({
+                    path: "basic.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+        ]);
+        expect(controller.getApplyPlan()).not.toBeNull();
+
+        controller.setEnabled(false);
+
+        expect(controller.getApplyPlan()).toBeNull();
+        expect(controller.getState()).toMatchObject({
+            enabled: false,
+            plannedTargets: [],
+            activeTargets: [],
+        });
+    });
+
     it("guards apply path unless explicitly enabled and switched to apply mode", () => {
         const controller = new MmeFallbackController();
 
