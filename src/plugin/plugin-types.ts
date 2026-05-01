@@ -3,6 +3,7 @@ import type { Camera } from "@babylonjs/core/Cameras/camera";
 import type { Engine } from "@babylonjs/core/Engines/engine";
 import type { WebGPUEngine } from "@babylonjs/core/Engines/webgpuEngine";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
+import type { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import type { Material } from "@babylonjs/core/Materials/material";
 import type { Scene } from "@babylonjs/core/scene";
 
@@ -58,7 +59,7 @@ export interface AccessoryHookContext extends PluginContext {
     readonly accessoryName: string | null;
     readonly accessoryPath: string | null;
     readonly accessoryKind: "x" | "glb" | null;
-    readonly rootNode: AbstractMesh | null;
+    readonly rootNode: TransformNode | AbstractMesh | null;
     readonly meshes: readonly AbstractMesh[];
     readonly materials: readonly PluginMaterialTarget[];
 }

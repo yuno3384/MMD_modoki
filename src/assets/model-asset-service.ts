@@ -832,6 +832,17 @@ export async function loadPMX(host: any, filePath: string): Promise<ModelInfo | 
         }
 
         host.onSceneModelLoaded?.(modelInfo, host.sceneModels.length, activateAsCurrent);
+        host.emitPluginModelLoaded?.({
+            modelIndex: host.sceneModels.length - 1,
+            modelName: modelInfo.name,
+            modelPath: modelInfo.path,
+            rootMesh: mmdMesh,
+            meshes: result.meshes as Mesh[],
+            materials: sceneMaterials.map((entry) => ({
+                material: entry.material,
+                meshNames: entry.meshNames,
+            })),
+        });
         host.resumeSceneRendering();
         return modelInfo;
     } catch (err: unknown) {

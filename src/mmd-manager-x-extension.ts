@@ -71,6 +71,18 @@ type XLoadHost = {
     shadowGenerator: Pick<ShadowGenerator, "addShadowCaster" | "removeShadowCaster">;
     onError: ((message: string) => void) | null;
     applyToonShadowInfluenceToMeshes?: (meshes: Mesh[]) => void;
+    emitPluginAccessoryLoaded?: (context: {
+        accessoryIndex: number | null;
+        accessoryName: string | null;
+        accessoryPath: string | null;
+        accessoryKind: "x" | "glb" | null;
+        rootNode: TransformNode | AbstractMesh | null;
+        meshes: readonly AbstractMesh[];
+        materials: readonly {
+            material: Material;
+            meshNames: readonly string[];
+        }[];
+    }) => void;
     getLoadedModels?: () => ArrayLike<unknown>;
     setCameraTarget?: (x: number, y: number, z: number) => void;
     setCameraDistance?: (distance: number) => void;
@@ -431,6 +443,38 @@ function collectAccessoryMaterials(meshes: readonly AbstractMesh[]): Material[] 
     }
 
     return materials;
+}
+
+function collectAccessoryMaterialTargets(meshes: readonly AbstractMesh[]): Array<{
+    material: Material;
+    meshNames: readonly string[];
+}> {
+    const materialToMeshNames = new Map<Material, string[]>();
+
+    const register = (material: Material | null | undefined, meshName: string): void => {
+        if (!(material instanceof Material)) return;
+        const meshNames = materialToMeshNames.get(material) ?? [];
+        meshNames.push(meshName);
+        materialToMeshNames.set(material, meshNames);
+    };
+
+    for (const mesh of meshes) {
+        const meshName = mesh.name || "mesh";
+        const material = mesh.material;
+        if (material instanceof MultiMaterial) {
+            for (const subMaterial of material.subMaterials) {
+                register(subMaterial ?? null, meshName);
+            }
+            continue;
+        }
+
+        register(material ?? null, meshName);
+    }
+
+    return Array.from(materialToMeshNames.entries(), ([material, meshNames]) => ({
+        material,
+        meshNames,
+    }));
 }
 
 function prepareManagedAccessoryMeshes(host: XLoadHost, meshes: AbstractMesh[], castShadows: boolean): AbstractMesh[] {
@@ -1140,6 +1184,16 @@ if (!mmdManagerProto.loadX) {
                 },
                 X_ACCESSORY_IMPORT_SCALE,
             );
+            const entry = getAccessoryEntries(host as XLoadHost & object).at(-1) ?? null;
+            host.emitPluginAccessoryLoaded?.({
+                accessoryIndex: entry ? getAccessoryEntries(host as XLoadHost & object).length - 1 : null,
+                accessoryName,
+                accessoryPath: filePath,
+                accessoryKind: "x",
+                rootNode: entry?.root ?? null,
+                meshes: entry?.meshes ?? [],
+                materials: collectAccessoryMaterialTargets(entry?.meshes ?? []),
+            });
             host.applyToonShadowInfluenceToMeshes?.(result.meshes as Mesh[]);
 
             console.log("[X] Loaded:", fileName, "meshes:", result.meshes.length, "accessory:", accessoryName);
@@ -1191,6 +1245,16 @@ if (!mmdManagerProto.loadX) {
                 },
                 GLB_ACCESSORY_IMPORT_SCALE,
             );
+            const entry = getAccessoryEntries(host as XLoadHost & object).at(-1) ?? null;
+            host.emitPluginAccessoryLoaded?.({
+                accessoryIndex: entry ? getAccessoryEntries(host as XLoadHost & object).length - 1 : null,
+                accessoryName,
+                accessoryPath: filePath,
+                accessoryKind: "glb",
+                rootNode: entry?.root ?? null,
+                meshes: entry?.meshes ?? [],
+                materials: collectAccessoryMaterialTargets(entry?.meshes ?? []),
+            });
 
             console.log("[GLB] Loaded:", fileName, "meshes:", container.meshes.length, "accessory:", accessoryName);
             return true;
