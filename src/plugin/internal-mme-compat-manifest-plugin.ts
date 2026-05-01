@@ -1,6 +1,7 @@
 import type { ScenePlugin } from "./plugin-types";
 import { pluginUiRegistry } from "./ui-registry";
 import { analyzeMmeEffectIR } from "./mme-effect-mapper";
+import { planMmeFallbackPreset } from "./mme-fallback-preset-planner";
 import {
     createMmeManifest,
     type MMEManifest,
@@ -66,16 +67,20 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
             const analyses = parsedEffects.map((effect) => ({
                 path: effect.path,
                 analysis: analyzeMmeEffectIR(effect, { manifest }),
+                plan: planMmeFallbackPreset(analyzeMmeEffectIR(effect, { manifest }), effect, { manifest }),
             }));
             const parsedSummary = document.createElement("pre");
-            parsedSummary.textContent = JSON.stringify(analyses.map(({ path, analysis }) => ({
+            parsedSummary.textContent = JSON.stringify(analyses.map(({ path, analysis, plan }) => ({
                 path,
                 status: analysis.status,
                 confidence: Number(analysis.confidence.toFixed(2)),
+                fallbackPreset: plan.preset,
+                fallbackConfidence: Number(plan.confidence.toFixed(2)),
+                fallbackReasons: plan.reasons,
                 mappedFields: Object.fromEntries(Object.entries(analysis.mappedFields)
                     .filter(([, value]) => value !== null)),
-                unsupportedFeatures: analysis.unsupportedFeatures,
-                warnings: analysis.warnings,
+                unsupportedFeatures: plan.blockedByUnsupportedFeatures,
+                warnings: plan.warnings,
             })), null, 2);
             parsedSummary.style.margin = "8px 0 0";
             parsedSummary.style.padding = "8px";
