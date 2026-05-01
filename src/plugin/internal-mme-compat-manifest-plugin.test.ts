@@ -15,6 +15,28 @@ const TEST_SCENE_CONTEXT: SceneHookContext = {
 };
 
 describe("InternalMmeCompatManifestPlugin", () => {
+    it("normalizes duplicate path spellings to one registered file", () => {
+        const plugin = createInternalMmeCompatManifestPlugin();
+
+        try {
+            plugin.registerMmeFile({
+                path: "C:\\Effects\\\\main.fx",
+                text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+            });
+            const result = plugin.registerMmeFile({
+                path: "C:/Effects/main.fx",
+                text: `float4 Diffuse : DIFFUSE = float4(0, 0, 0, 1);`,
+            });
+
+            expect(result.ok).toBe(true);
+            expect(result.manifest?.rootFile).toBe("C:/Effects/main.fx");
+            expect(result.manifest?.discoveredFxFiles).toEqual(["C:/Effects/main.fx"]);
+            expect(Object.keys(result.manifest?.parsedEffects ?? {})).toEqual(["C:/Effects/main.fx"]);
+        } finally {
+            plugin.onDispose?.(TEST_SCENE_CONTEXT);
+        }
+    });
+
     it("registering an fx file builds a manifest", () => {
         const plugin = createInternalMmeCompatManifestPlugin();
 
@@ -28,6 +50,48 @@ describe("InternalMmeCompatManifestPlugin", () => {
             expect(result.manifest?.rootFile).toBe("C:/Effects/main.fx");
             expect(result.manifest?.discoveredFxFiles).toEqual(["C:/Effects/main.fx"]);
             expect(plugin.getCurrentMmeManifest()?.rootFile).toBe("C:/Effects/main.fx");
+        } finally {
+            plugin.onDispose?.(TEST_SCENE_CONTEXT);
+        }
+    });
+
+    it("uses the first registered fx file as root when no x file exists", () => {
+        const plugin = createInternalMmeCompatManifestPlugin();
+
+        try {
+            plugin.registerMmeFile({
+                path: "C:\\Effects\\first.fx",
+                text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+            });
+            const result = plugin.registerMmeFile({
+                path: "C:\\Effects\\second.fxsub",
+                text: `float4 Diffuse : DIFFUSE = float4(0, 0, 0, 1);`,
+            });
+
+            expect(result.ok).toBe(true);
+            expect(result.manifest?.rootFile).toBe("C:/Effects/first.fx");
+            expect(result.manifest?.rootKind).toBe("fx");
+        } finally {
+            plugin.onDispose?.(TEST_SCENE_CONTEXT);
+        }
+    });
+
+    it("promotes an x file to root even if an fx file was registered first", () => {
+        const plugin = createInternalMmeCompatManifestPlugin();
+
+        try {
+            plugin.registerMmeFile({
+                path: "C:\\Effects\\standalone.fx",
+                text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+            });
+            const result = plugin.registerMmeFile({
+                path: "C:\\Effects\\ray.x",
+                text: "xof 0303txt 0032",
+            });
+
+            expect(result.ok).toBe(true);
+            expect(result.manifest?.rootFile).toBe("C:/Effects/ray.x");
+            expect(result.manifest?.rootKind).toBe("x");
         } finally {
             plugin.onDispose?.(TEST_SCENE_CONTEXT);
         }

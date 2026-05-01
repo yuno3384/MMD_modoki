@@ -4,6 +4,7 @@ import { MmeFallbackController } from "./mme-fallback-controller";
 import {
     createMmeManifest,
     getMmeFileKind,
+    normalizeMmePath,
     type MMEManifest,
     type MmeCompatFileEntry,
 } from "./mme-compat-manifest";
@@ -37,14 +38,12 @@ export type InternalMmeCompatManifestPlugin = ScenePlugin & {
  */
 export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManifestPlugin {
     let manifest: MMEManifest | null = null;
-    let currentRootFile: string | null = null;
     const registeredFiles = new Map<string, MmeCompatFileEntry>();
     const mountedContainers = new Set<HTMLElement>();
     const fallbackController = new MmeFallbackController();
 
     const clearCurrentManifest = (): void => {
         manifest = null;
-        currentRootFile = null;
         registeredFiles.clear();
         fallbackController.clearPreview();
         fallbackController.clearApplyPlan();
@@ -233,17 +232,18 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
             return manifest;
         },
         discoverManifest(rootFile: string, files: readonly MmeCompatFileEntry[]): MMEManifest {
-            currentRootFile = rootFile;
             registeredFiles.clear();
             for (const file of files) {
-                registeredFiles.set(file.path, file);
+                const normalizedFile = normalizeRegisteredMmeFile(file);
+                registeredFiles.set(normalizedFile.path, normalizedFile);
             }
-            manifest = createMmeManifest(rootFile, files);
+            manifest = createMmeManifest(normalizeMmePath(rootFile), Array.from(registeredFiles.values()));
             rerenderPanels();
             return manifest;
         },
         registerMmeFile(file: MmeCompatFileEntry): MmeFileRegistrationResult {
-            const fileKind = getMmeFileKind(file.path);
+            const normalizedFile = normalizeRegisteredMmeFile(file);
+            const fileKind = getMmeFileKind(normalizedFile.path);
             if (fileKind !== "x" && fileKind !== "fx" && fileKind !== "fxsub" && fileKind !== "conf") {
                 return {
                     ok: false,
@@ -252,12 +252,11 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
                 };
             }
 
-            registeredFiles.set(file.path, file);
-            if (currentRootFile === null) {
-                currentRootFile = file.path;
-            }
-
-            manifest = createMmeManifest(currentRootFile, Array.from(registeredFiles.values()));
+            registeredFiles.set(normalizedFile.path, normalizedFile);
+            const selectedRootFile = selectRegisteredRootFile(Array.from(registeredFiles.values()));
+            manifest = selectedRootFile
+                ? createMmeManifest(selectedRootFile, Array.from(registeredFiles.values()))
+                : null;
             rerenderPanels();
             return {
                 ok: true,
@@ -276,6 +275,36 @@ export function createInternalMmeCompatManifestPlugin(): InternalMmeCompatManife
             mountedContainers.clear();
         },
     };
+}
+
+function normalizeRegisteredMmeFile(file: MmeCompatFileEntry): MmeCompatFileEntry {
+    return {
+        ...file,
+        path: normalizeMmePath(file.path),
+    };
+}
+
+/**
+ * Registration root policy:
+ * - prefer the first registered .x file
+ * - otherwise the first registered .fx file
+ * - otherwise the first registered .fxsub file
+ * - otherwise the first registered .conf file
+ *
+ * This lets a later accessory-style .x registration intentionally become the
+ * manifest root while keeping insertion order stable within each file type.
+ */
+function selectRegisteredRootFile(files: readonly MmeCompatFileEntry[]): string | null {
+    const rootKinds: readonly ("x" | "fx" | "fxsub" | "conf")[] = ["x", "fx", "fxsub", "conf"];
+
+    for (const rootKind of rootKinds) {
+        const match = files.find((file) => getMmeFileKind(file.path) === rootKind);
+        if (match) {
+            return match.path;
+        }
+    }
+
+    return null;
 }
 
 function appendSummaryRow(container: HTMLElement, label: string, value: string): void {
