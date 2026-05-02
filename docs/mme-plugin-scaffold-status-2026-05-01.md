@@ -1,358 +1,383 @@
 # MME / Plugin Scaffold 現状メモ 2026-05-01
 
-## 目的
+この文書は 2026-05-01 時点の整理メモとして作成し、2026-05-02 時点の内容で追記更新している。ファイル名は最初の作成日に合わせて据え置いている。
 
-このメモは、`feature/plugin-effect-api` ブランチ上で段階的に追加した
-plugin / effect API と MME 互換 scaffold の現状をまとめるものです。
+## PR サマリー
 
-現段階の主目的は次の 3 点です。
+### 何が実装されたか
 
-- 将来の MME 互換実装に向けた接続点を明確にする
-- 既存 runtime を壊さず dry-run 中心の調査導線を用意する
-- 材質適用や shader 実行の前に、安全境界を文書化する
+`feature/plugin-effect-api` では、MMD_modoki に対して read-only 前提の plugin / effect scaffold と、MME 互換調査用の dry-run パイプラインを追加した。
 
-この段階では、`実際の fallback 材質適用` や `MME shader 実行` はまだ実装していません。
+今回入っているのは、以下のような「拡張の土台」と「非破壊の調査導線」である。
 
-## 現在の構成
+- read-only `PluginHost`
+- scene lifecycle hook
+- model / accessory asset hook
+- 最小 UI registry
+- 既存 Glow / AutoLuminous-lite の internal adapter
+- MME bundle manifest loader
+- partial `.fx` structure parser
+- parsed effect mapper / analyzer
+- fallback preset planner
+- fallback material factory scaffold
+- preview / apply controller scaffold
+- experimental apply gate
+- scene material target candidate view
+- candidate filter / sort / selection / detail view
+- selected candidate 向け highlight plan scaffold
+
+### 何が未実装か
+
+今回の scaffold は、MME の完全対応でも shader 実行基盤でもない。
+
+特に未実装なのは以下。
+
+- 実際の fallback material 適用
+- `mesh.material` の差し替え
+- MME shader の実行
+- HLSL-to-GLSL / WGSL translation
+- multipass / render target effect の実行互換
+- Ray-MMD 対応
+- 実際の mesh highlight
+- apply / revert の本実装
+
+### Safety Guarantees
+
+現時点の MME / plugin scaffold は、意図的に non-mutating である。
+
+- preview は dry-run のみ
+- scene / material / mesh / camera を自動変更しない
+- `mesh.material` を書き換えない
+- material apply を自動実行しない
+- shader を compile / translate / execute しない
+- experimental apply gate は default で `false`
+- apply path は gate が開いていても `apply-not-implemented` を返す
+
+### なぜ apply を gate しているか
+
+MME 互換は、材質差し替え・shader 差し替え・render state の扱いを間違えると、既存の MMD ワークフローを壊しやすい。
+
+そのため、現段階では以下を優先している。
+
+- まず file discovery と `.fx` 構造把握を安定化する
+- 次に fallback 候補を dry-run で可視化する
+- 最後に scope を狭くした apply を opt-in で検討する
+
+つまり、apply gate は「未完成な apply を accidental に有効化しないため」の明示的な安全装置である。
+
+## マイルストーン要約
+
+### Step 1-5
+
+- Step 1: `PluginHost` / plugin 型 / no-op registry を追加
+- Step 2: scene lifecycle hook を `MmdManager` に配線
+- Step 3: model / accessory load hook を配線
+- Step 4: shared material target helper を追加
+- Step 5: 既存 luminous glow を internal `EffectPlugin` adapter として包んだ
+
+### Step 6-10
+
+- Step 6: plugin panel 用の最小 UI registry を追加
+- Step 7: internal `mme-compat-manifest` plugin を追加し、MME 関連 file discovery を実装
+- Step 8: partial `.fx` structure parser を追加
+- Step 9: parsed effect の mapper / analyzer を追加
+- Step 10: fallback preset planner を追加
+
+### Step 11-15
+
+- Step 11: fallback material factory scaffold を追加
+- Step 12: preview / apply controller scaffold を追加
+- Step 13: debug panel を controller 中心の single source of truth に整理
+- Step 14: apply transaction / revert scaffold を追加
+- Step 15: internal MME file registration API を追加
+
+### Step 16-20
+
+- Step 16: registered file path normalization と root selection policy を明文化
+- Step 17: debug panel に minimal file picker を追加
+- Step 18: preview toggle を有効化し、dry-run preview を panel から明示制御できるようにした
+- Step 19: duplicate だった dry-run preview computation を整理し、preview cleanup path を controller 側へ寄せた。dry-run / no-apply の挙動は維持した
+- Step 20: experimental apply gate を追加
+
+### Step 21-27
+
+- Step 21: Apply Status 表示を gate 状態込みで整理
+- Step 22: docs へ安全性と現状整理を追加
+- Step 23: scene material target candidate view を追加
+- Step 24: candidate filter / sort を追加
+- Step 25: candidate selection / detail view を追加
+- Step 26: selected candidate 向け highlight plan scaffold を追加
+- Step 27: `MmeFallbackHighlightPlan.reason` を literal union に狭めた
+
+## 現在のアーキテクチャ
 
 ### 1. PluginHost
 
-関連ファイル:
+対象:
 
 - `src/plugin/plugin-types.ts`
 - `src/plugin/plugin-host.ts`
 
-read-only 前提の `PluginHost` / `PluginContext` と、no-op safe な registry を持つ。
+役割:
 
-現状の役割:
+- plugin registration / dispatch の最小土台
+- callback へ渡す read-only runtime context の定義
+- duplicate id reject
+- hook dispatch の例外隔離
 
-- plugin 登録と解除
-- scene lifecycle hook 発火
-- asset hook 発火
-- plugin callback の例外隔離
+### 2. Lifecycle / Asset Hooks
 
-制約:
-
-- plugin callback へ mutable な host 操作 API は渡さない
-- `registerPlugin()` は duplicate id を reject する
-
-### 2. Scene lifecycle hooks
-
-関連ファイル:
+対象:
 
 - `src/mmd-manager.ts`
-
-接続済み hook:
-
-- `emitSceneReady()`
-- `emitBeforeRender()`
-- `emitAfterRender()`
-- `emitDispose()`
-
-方針:
-
-- 既存 render loop や scene 初期化順を大きく変えず、将来 plugin が差し込める境界だけを作る
-
-### 3. Asset hooks
-
-関連ファイル:
-
 - `src/assets/model-asset-service.ts`
 - `src/mmd-manager-x-extension.ts`
 
-接続済み hook:
+役割:
 
-- `emitModelLoaded()`
-- `emitAccessoryLoaded()`
+- scene ready / before render / after render / dispose
+- model loaded / accessory loaded
 
-渡している情報:
+### 3. UI Registry
 
-- source path
-- root node
-- mesh references
-- material list
-- model / accessory kind
-
-### 4. UI registry
-
-関連ファイル:
+対象:
 
 - `src/plugin/ui-registry.ts`
 - `src/ui-controller.ts`
 
-最小の plugin UI 登録面を用意している。
+役割:
 
-現状の登録面:
+- plugin panel 用の最小 mount point
+- 既存 UI を壊さず panel を差し込むための extension point
 
-- `registerPanel()`
-- `registerToolbarAction()` は registry のみ
-- `registerInspectorSection()` は registry のみ
+### 4. Internal Luminous Adapter
 
-実際に mount しているのは panel のみ。
-
-### 5. Internal luminous glow adapter
-
-関連ファイル:
+対象:
 
 - `src/plugin/internal-luminous-glow-effect.ts`
-- `src/mmd-manager.ts`
 - `src/scene/material-shader-service.ts`
 
-既存の Glow / AutoLuminous-lite 相当挙動を再実装せず、internal `EffectPlugin` adapter で包んでいる。
+役割:
 
-意図:
+- 既存 glow 実装を plugin/effect API 上で扱えることの実証
+- glow 実装そのものは再実装しない
 
-- plugin/effect API が既存 effect を host できることの確認
-- 既存 glow 実装の複製を避ける
+### 5. MME Manifest Loader
 
-### 6. MME manifest loader
-
-関連ファイル:
+対象:
 
 - `src/plugin/mme-compat-manifest.ts`
 - `src/plugin/internal-mme-compat-manifest-plugin.ts`
 
 役割:
 
-- `.x` / `.fx` / `.fxsub` / `.conf` の登録
-- include path 探索
-- same-name `.x -> .fx` 発見
-- texture candidate 列挙
-- missing file / warning 集約
+- `.x` / `.fx` / `.fxsub` / `.conf` の発見
+- include graph
+- missing file / warning 管理
+- same-name `.x -> .fx` discovery
 
-root 選択ポリシー:
+### 6. Partial .fx Parser
 
-- `.x` があれば優先
-- なければ最初の `.fx`
-- 次に `.fxsub`
-- 最後に `.conf`
-
-### 7. Partial .fx parser
-
-関連ファイル:
+対象:
 
 - `src/plugin/mme-fx-parser.ts`
 
-現状 parse しているもの:
+役割:
 
+- `.fx` / `.fxsub` から高レベル構造だけを抽出
 - `#include`
-- parameter / uniform の一部
-- texture declaration
-- sampler / sampler2D
-- annotation
-- semantic
+- parameter / uniform
+- texture / sampler
 - technique / pass
-- `VertexShader`
-- `PixelShader`
-- 一部 render target 記述
+- `VertexShader` / `PixelShader`
 
-現状やっていないもの:
+### 7. Mapper
 
-- HLSL 翻訳
-- shader compile
-- shader 実行
-
-### 8. Mapper
-
-関連ファイル:
+対象:
 
 - `src/plugin/mme-effect-mapper.ts`
 
-`MMEEffectIR` を保守的に解析し、次を返す。
+役割:
 
-- support status
-- mapped material-like fields
-- unsupported features
-- warnings
+- parsed effect を `parsed` / `partiallyMapped` / `unsupported` / `failed` に分類
+- material-like field を保守的に抽出
 
-status:
+### 8. Planner
 
-- `parsed`
-- `partiallyMapped`
-- `unsupported`
-- `failed`
-
-### 9. Fallback preset planner
-
-関連ファイル:
+対象:
 
 - `src/plugin/mme-fallback-preset-planner.ts`
 
-解析結果から、将来どの fallback preset が候補かだけを決める。
+役割:
 
-preset:
-
-- `none`
 - `basicToon`
 - `textureToon`
 - `katameLike`
 - `emissiveLite`
 - `unsupported`
 
-この時点では material 作成も適用もしない。
+への fallback 推奨を dry-run で決める。
 
-### 10. Fallback material factory scaffold
+### 9. Factory
 
-関連ファイル:
+対象:
 
 - `src/plugin/mme-fallback-material-factory.ts`
 
-安全な Babylon material 作成経路を将来向けに準備している。
+役割:
 
-現状:
+- fallback preset ごとの material scaffold 作成可否を dry-run 判定
+- `basicToon` / `textureToon` / `emissiveLite` は safe scaffold 寄り
+- `katameLike` は現状 unsupported
 
-- dry-run が既定
-- `basicToon`
-- `textureToon`
-- `emissiveLite`
-  の scaffold 判定を持つ
-- `katameLike` は未対応
+### 10. Preview / Apply Controller
 
-重要点:
-
-- mesh へは attach しない
-- non-dry-run allocation は自動では行わない
-
-### 11. Preview / apply controller
-
-関連ファイル:
+対象:
 
 - `src/plugin/mme-fallback-controller.ts`
 
 役割:
 
-- preview plan の作成
-- apply transaction plan の作成
-- clear / dispose 管理
-- 将来 apply / revert の安全境界を定義
+- preview plan 構築
+- apply transaction scaffold
+- target candidate view 構築
+- highlight plan scaffold
+- experimental apply gate 管理
 
-default state:
+### 11. Candidate View / Highlight Plan
 
-- `enabled = false`
-- `mode = "preview"`
+対象:
 
-現時点の apply は stub であり、実際の材質差し替えはしない。
-
-### 12. Experimental apply gate
-
-関連ファイル:
-
-- `src/plugin/mme-fallback-controller.ts`
 - `src/plugin/internal-mme-compat-manifest-plugin.ts`
+- `src/plugin/material-targets.ts`
 
-`experimentalApplyEnabled` を追加済み。
+役割:
 
-目的:
+- scene material target を read-only candidate として列挙
+- filter / sort / selection / detail
+- selected candidate から highlight plan を作る
 
-- 将来 apply 実装を入れる前に、明示的 opt-in が必要な gate を先に固定する
+ただし highlight plan は「将来のための計画」であり、実際の highlight はまだしない。
 
-default:
+## NOT IMPLEMENTED
 
-- `false`
+以下は明示的に未実装である。
 
-現状:
+- real material replacement
+- `mesh.material` assignment
+- non-dry-run fallback apply
+- undo / revert の実動作
+- MME shader execution
+- HLSL translation
+- render target dependency 解決
+- Ray-MMD support
+- real mesh highlight
+- camera focus / jump
 
-- gate を ON にしても apply 自体は未実装
-- debug panel 上でも `Apply Fallback (TODO)` は disabled のまま
+## Safety Guarantees
 
-## 安全チェックリスト
+実装済み scaffold が守るべき安全条件は以下。
 
-現段階の scaffold は、次の安全条件を前提にしている。
-
-- 自動 material apply を行わない
-- `mesh.material` を代入しない
-- non-dry-run material allocation を自動では行わない
-- shader を実行しない
-- HLSL-to-GLSL/WGSL translation をしない
-- Ray-MMD rendering をしない
-- preview は dry-run のみ
-- apply は未実装のまま blocked/unsupported を返す
-- experimental apply gate の default は `false`
-- manifest / preview / apply plan の clear は分離ではなく安全側に寄せて reset する
-
-## 現在の UI 導線
-
-MME debug panel では次が可能。
-
-- `.x` / `.fx` / `.fxsub` / `.conf` の複数選択登録
-- manifest summary 確認
-- partial `.fx` parse 結果確認
-- fallback preview の明示的 ON/OFF
-- experimental apply gate の明示的 ON/OFF
-
-ただし次はまだ不可。
-
-- 実際の fallback material apply
-- Apply button の有効化
-- shader 実行結果の確認
+- dry-run only を基本とする
+- preview は read-only
+- apply は未実装
+- scene mutation は行わない
+- explicit future implementation と experimental gate の両方が揃わない限り apply しない
+- `experimentalApplyEnabled` は default `false`
+- clear / dispose 時に preview / apply plan / gate / selection を安全に落とす
 
 ## 検証状況
 
-2026-05-01 時点の確認結果:
+2026-05-02 時点の確認結果:
 
 - `npm.cmd run lint`
+  - 通過
   - `0 errors / 455 warnings`
-  - warning は repo-wide 既存のものを含む
 - `node_modules\.bin\tsc.cmd --noEmit`
-  - 既存の repo-wide TypeScript error により失敗
-  - この scaffold 追加だけが原因ではない
-- `Vitest` の targeted test
-  - この環境では `spawn EPERM` により実行不可
-  - test file 自体は追加済みだが、sandbox 上の runtime 検証は未完了
+  - 失敗
+  - 既存の repo-wide TypeScript error による
+- targeted `Vitest`
+  - この sandbox では `spawn EPERM` により実行不可
 
-## 現時点で未実装のもの
+このため、現状の品質表現は「lint は通るが、repo 全体の TypeScript 健全性とテスト実行環境は別課題が残っている」が正確である。
 
-- real material assignment
-- undo を伴う実 apply transaction
-- per-material target への具体的 binding
-- shader translation
-- MME 固有 render state の再現
-- multipass / render target effect の再現
-- Ray-MMD compatibility
+## 次の候補
 
-## 次の実装候補
+### Step 29
 
-### 1. MME bundle UX 改善
-
-- bundle 単位の登録状態表示
-- root 選択状態の UI 表示
-- missing include / missing texture の見やすい表示
-
-### 2. Material target との接続
-
-- `material-targets.ts` ベースで scene 上の実材質と preview plan を結び付ける
-- どの model / accessory material が候補かを read-only で見せる
-
-### 3. 明示的 apply 実装
+非常に限定した `basicToon` apply を gate 配下で試す。
 
 条件:
 
-- experimental gate のまま
-- narrow scope
-- undo plan を先に詰める
+- 明示 opt-in
+- 対象を狭く限定
+- 既存材質への復帰手段を先に整理
 
-最初の対象候補:
+### Step 30
 
-- `basicToon`
-- `textureToon`
+undo transaction の本実装。
 
-### 4. Undo transaction 実装
+- original material reference の保存
+- created fallback material ownership の管理
+- revert path の明示
 
-- original material の退避
-- created fallback material の ownership
-- revert path の明確化
+### Step 31
 
-### 5. Ray-MMD 方針整理
+optional な real highlight 実装。
 
-現時点では unsupported のままにする。
+ただし以下が前提。
 
-扱うとしても:
+- highlight する対象 mesh の同定精度
+- scene mutation の scope 制御
+- UI から accidental に走らない設計
 
-- stress-test / research 扱い
-- 一般 fallback と混ぜない
+### Step 32+
 
-## 判断メモ
+advanced fallback / partial material replacement の検討。
 
-現 scaffold は、`MME を動かす` 段階ではなく、`MME を安全に調査し将来の適用境界を作る` 段階として読むべきです。
+候補:
 
-このため、apply がまだ未実装であること、dry-run に寄せていること、preview を明示的 opt-in にしていることは、欠落ではなく現段階の安全設計です。
+- `textureToon` の限定 apply
+- emissive 系の限定 apply
+- per-material binding の改善
+
+### Ray-MMD について
+
+Ray-MMD は引き続き unsupported として扱う。
+
+現段階では:
+
+- parity を目標にしない
+- stress-test / research 対象としてのみ扱う
+- core MMD workflow より優先しない
+
+## PR 用説明文たたき台
+
+This PR adds a read-only plugin/effect scaffold and an experimental MME compatibility investigation pipeline to `feature/plugin-effect-api`.
+
+Implemented:
+
+- read-only plugin host and lifecycle hooks
+- model/accessory asset hooks
+- minimal plugin UI registry
+- internal luminous glow adapter
+- MME manifest discovery and partial `.fx` structural parsing
+- effect analysis, fallback preset planning, and dry-run material factory scaffolding
+- preview/apply controller scaffolding with an experimental apply gate
+- read-only scene material candidate view with filter/sort/selection/detail and highlight-plan scaffolding
+
+Not implemented:
+
+- real material application
+- `mesh.material` replacement
+- shader execution or translation
+- Ray-MMD support
+- real highlight/apply/revert behavior
+
+Safety:
+
+- preview is dry-run only
+- no scene/material/mesh/camera mutation
+- apply is still stubbed and additionally gated behind an explicit experimental flag that defaults to false
+
+This PR is intended to make the scaffold reviewable and extensible before any real fallback material application is attempted.
