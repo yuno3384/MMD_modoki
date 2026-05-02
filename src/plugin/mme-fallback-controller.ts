@@ -104,6 +104,12 @@ export type MmeFallbackTargetCandidate = {
     readonly matchingPolicy: "single-global-effect" | "multi-global-effect" | "unmatched";
 };
 
+export type MmeFallbackHighlightReason =
+    | "candidate-missing"
+    | "candidate-unmatched"
+    | "effect-binding-not-precise"
+    | "target-identity-clear";
+
 export type MmeFallbackHighlightPlan = {
     readonly selectedCandidateId: string | null;
     readonly targetId: string | null;
@@ -112,7 +118,7 @@ export type MmeFallbackHighlightPlan = {
     readonly meshName: string | null;
     readonly materialName: string | null;
     readonly highlightable: boolean;
-    readonly reason: string;
+    readonly reason: MmeFallbackHighlightReason;
     readonly warnings: readonly string[];
 };
 
