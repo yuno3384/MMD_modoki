@@ -1,4 +1,5 @@
 import type { Material } from "@babylonjs/core/Materials/material";
+import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { Scene } from "@babylonjs/core/scene";
 
 import type { MaterialEffectTarget } from "./material-targets";
@@ -20,7 +21,9 @@ export type MmeFallbackPreviewInput = {
     readonly targetName?: string | null;
     readonly meshName?: string | null;
     readonly materialName?: string | null;
+    readonly mesh?: AbstractMesh | null;
     readonly originalMaterial?: Material | null;
+    readonly matchingPolicy?: MmeFallbackTargetCandidate["matchingPolicy"] | null;
     readonly sourcePath?: string | null;
     readonly scene?: Scene | null;
 };
@@ -40,6 +43,8 @@ export type MmeFallbackPreviewPlanItem = {
     readonly blockedByUnsupportedFeatures: readonly string[];
     readonly factoryStatus: MmeFallbackMaterialFactoryResult["status"];
     readonly warnings: readonly string[];
+    readonly analysis: MmeEffectAnalysis;
+    readonly fallbackPlan: MmeFallbackPlan;
 };
 
 export type MmeFallbackControllerState = {
@@ -73,8 +78,12 @@ export type MmeFallbackApplyTargetRecord = {
     readonly meshName: string | null;
     readonly materialName: string | null;
     readonly sourcePath: string | null;
+    readonly mesh: AbstractMesh | null;
+    readonly scene: Scene | null;
+    readonly matchingPolicy: MmeFallbackTargetCandidate["matchingPolicy"] | null;
     readonly originalMaterial: Material | null;
     readonly originalMaterialAvailable: boolean;
+    readonly createdFallbackMaterial: Material | null;
     readonly plannedFallback: MmeFallbackPreviewPlanItem;
     readonly plannedFallbackOwnership: "none" | "controller" | "external";
 };
@@ -287,8 +296,12 @@ export class MmeFallbackController {
                 meshName: entry.meshName,
                 materialName: entry.materialName,
                 sourcePath: entry.sourcePath,
+                mesh: inputs[index]?.mesh ?? null,
+                scene: inputs[index]?.scene ?? null,
+                matchingPolicy: inputs[index]?.matchingPolicy ?? null,
                 originalMaterial: inputs[index]?.originalMaterial ?? null,
                 originalMaterialAvailable: Object.prototype.hasOwnProperty.call(inputs[index] ?? {}, "originalMaterial"),
+                createdFallbackMaterial: null,
                 plannedFallback: entry,
                 plannedFallbackOwnership: "none",
             })),
@@ -299,6 +312,9 @@ export class MmeFallbackController {
     }
 
     public clearApplyPlan(): void {
+        if (this.applyPlan?.status === "applied") {
+            this.revertApply();
+        }
         this.applyPlan = null;
     }
 
@@ -335,10 +351,115 @@ export class MmeFallbackController {
                 warnings: ["Fallback apply requires an explicit apply plan"],
             };
         }
+        const validation = this.validateApplyTransaction(this.applyPlan);
+        if (validation.warnings.length > 0) {
+            return {
+                status: "blocked",
+                reason: validation.reason,
+                warnings: validation.warnings,
+            };
+        }
+
+        const allocations: Array<{
+            readonly record: MmeFallbackApplyTargetRecord;
+            readonly result: MmeFallbackMaterialFactoryResult;
+            readonly scene: Scene;
+        }> = [];
+
+        for (const record of this.applyPlan.targetRecords) {
+            const scene = record.scene ?? resolveSceneFromMesh(record.mesh);
+            if (!scene) {
+                this.disposeFactoryAllocations(allocations);
+                return {
+                    status: "blocked",
+                    reason: "scene-unavailable",
+                    warnings: [`Scene is unavailable for fallback apply target: ${record.materialName ?? record.meshName ?? record.effectId}`],
+                };
+            }
+
+            const result = createMmeFallbackMaterial({
+                scene,
+                plan: record.plannedFallback.fallbackPlan,
+                analysis: record.plannedFallback.analysis,
+                targetMetadata: {
+                    targetName: record.targetName ?? record.materialName ?? record.effectId,
+                    sourcePath: record.sourcePath,
+                },
+                dryRun: false,
+            });
+
+            if (result.status !== "created" || !result.createdMaterial) {
+                this.disposeFactoryAllocations(allocations);
+                if (result.createdMaterial) {
+                    disposeMmeFallbackMaterial(result);
+                }
+                return {
+                    status: "blocked",
+                    reason: "fallback-material-create-failed",
+                    warnings: [...result.warnings],
+                };
+            }
+
+            allocations.push({
+                record,
+                result,
+                scene,
+            });
+        }
+
+        const assigned: Array<{
+            readonly mesh: AbstractMesh;
+            readonly originalMaterial: Material | null;
+        }> = [];
+
+        try {
+            for (const allocation of allocations) {
+                if (!allocation.record.mesh) {
+                    throw new Error("apply-mesh-missing");
+                }
+                const mesh = allocation.record.mesh;
+                const originalMaterial = allocation.record.originalMaterialAvailable
+                    ? allocation.record.originalMaterial
+                    : (mesh.material as Material | null);
+                assigned.push({
+                    mesh,
+                    originalMaterial,
+                });
+                mesh.material = allocation.result.createdMaterial;
+            }
+        } catch (error) {
+            for (const assignment of assigned) {
+                assignment.mesh.material = assignment.originalMaterial;
+            }
+            this.disposeFactoryAllocations(allocations);
+            return {
+                status: "blocked",
+                reason: "apply-assignment-failed",
+                warnings: [error instanceof Error ? error.message : "Unknown apply assignment failure"],
+            };
+        }
+
+        this.applyPlan = {
+            ...this.applyPlan,
+            status: "applied",
+            targetRecords: this.applyPlan.targetRecords.map((record) => {
+                const allocation = allocations.find((entry) => entry.record === record);
+                const assignment = assigned.find((entry) => entry.mesh === record.mesh);
+                return {
+                    ...record,
+                    scene: allocation?.scene ?? record.scene,
+                    originalMaterial: assignment?.originalMaterial ?? record.originalMaterial,
+                    originalMaterialAvailable: true,
+                    createdFallbackMaterial: allocation?.result.createdMaterial ?? null,
+                    plannedFallbackOwnership: allocation ? "controller" : record.plannedFallbackOwnership,
+                };
+            }),
+        };
+
         return {
-            status: "unsupported",
-            reason: "apply-not-implemented",
-            warnings: ["Actual fallback material assignment is intentionally not implemented in this step"],
+            status: "applied",
+            reason: "apply-succeeded",
+            warnings: allocations.flatMap((entry) => entry.result.warnings),
         };
     }
 
@@ -358,10 +479,36 @@ export class MmeFallbackController {
             };
         }
 
+        const invalidRecord = this.applyPlan.targetRecords.find((record) => record.mesh == null);
+        if (invalidRecord) {
+            return {
+                status: "blocked",
+                reason: "revert-target-missing",
+                warnings: [`Fallback revert target mesh is missing for: ${invalidRecord.materialName ?? invalidRecord.meshName ?? invalidRecord.effectId}`],
+            };
+        }
+
+        for (const record of this.applyPlan.targetRecords) {
+            record.mesh.material = record.originalMaterial;
+            if (record.createdFallbackMaterial) {
+                record.createdFallbackMaterial.dispose();
+            }
+        }
+
+        this.applyPlan = {
+            ...this.applyPlan,
+            status: "reverted",
+            targetRecords: this.applyPlan.targetRecords.map((record) => ({
+                ...record,
+                createdFallbackMaterial: null,
+                plannedFallbackOwnership: "none",
+            })),
+        };
+
         return {
-            status: "blocked",
-            reason: "revert-not-implemented",
-            warnings: ["Fallback material revert is intentionally not implemented in this step"],
+            status: "reverted",
+            reason: "revert-succeeded",
+            warnings: [],
         };
     }
 
@@ -416,6 +563,8 @@ export class MmeFallbackController {
                 blockedByUnsupportedFeatures: plan.blockedByUnsupportedFeatures,
                 factoryStatus: factoryResult.status,
                 warnings: [...plan.warnings, ...factoryResult.warnings],
+                analysis,
+                fallbackPlan: plan,
             });
         }
 
@@ -424,6 +573,51 @@ export class MmeFallbackController {
 
     private createTransactionId(): string {
         return `mme-fallback-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    private validateApplyTransaction(transaction: MmeFallbackApplyTransaction): {
+        reason: string;
+        warnings: readonly string[];
+    } {
+        const warnings: string[] = [];
+        const seenMeshes = new Set<AbstractMesh>();
+
+        for (const record of transaction.targetRecords) {
+            if (!record.mesh) {
+                warnings.push(`Target mesh is missing for apply: ${record.materialName ?? record.meshName ?? record.effectId}`);
+                continue;
+            }
+            if (seenMeshes.has(record.mesh)) {
+                warnings.push(`Duplicate mesh target is not allowed for apply: ${record.materialName ?? record.meshName ?? record.effectId}`);
+                return {
+                    reason: "duplicate-mesh-target",
+                    warnings,
+                };
+            }
+            seenMeshes.add(record.mesh);
+            if (record.matchingPolicy !== "single-global-effect") {
+                warnings.push(`Only single-global-effect candidates can be applied: ${record.materialName ?? record.meshName ?? record.effectId}`);
+            }
+            if (record.plannedFallback.preset !== "basicToon") {
+                warnings.push(`Only basicToon fallback apply is enabled in this step: ${record.materialName ?? record.meshName ?? record.effectId}`);
+            }
+            if (record.plannedFallback.factoryStatus === "unsupported" || record.plannedFallback.factoryStatus === "failed") {
+                warnings.push(`Fallback factory dry-run did not succeed for apply target: ${record.materialName ?? record.meshName ?? record.effectId}`);
+            }
+        }
+
+        return {
+            reason: "apply-targets-invalid",
+            warnings,
+        };
+    }
+
+    private disposeFactoryAllocations(
+        allocations: ReadonlyArray<{ result: MmeFallbackMaterialFactoryResult }>,
+    ): void {
+        for (const allocation of allocations) {
+            disposeMmeFallbackMaterial(allocation.result);
+        }
     }
 }
 
@@ -523,4 +717,11 @@ function createTargetCandidateId(target: MaterialEffectTarget): string {
         target.materialName,
         slot,
     ].join("::");
+}
+
+function resolveSceneFromMesh(mesh: AbstractMesh | null): Scene | null {
+    if (!mesh) return null;
+    const getScene = (mesh as { getScene?: () => Scene }).getScene;
+    if (typeof getScene !== "function") return null;
+    return getScene.call(mesh);
 }

@@ -1,8 +1,71 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { MmeFallbackController } from "./mme-fallback-controller";
 import { parseMmeEffectFile } from "./mme-fx-parser";
 import type { MaterialEffectTarget } from "./material-targets";
+
+vi.mock("./mme-fallback-material-factory", () => ({
+    createMmeFallbackMaterial(params: {
+        dryRun?: boolean;
+        plan: { preset: string; missingFields: readonly string[]; blockedByUnsupportedFeatures: readonly string[] };
+    }) {
+        const dryRun = params.dryRun ?? true;
+        const warnings: string[] = [];
+
+        if (params.plan.preset === "unsupported" || params.plan.preset === "none") {
+            return {
+                status: "unsupported",
+                preset: params.plan.preset,
+                materialName: "mock_unsupported",
+                materialType: "none",
+                warnings,
+            };
+        }
+        if (params.plan.missingFields.length > 0) {
+            return {
+                status: "skipped",
+                preset: params.plan.preset,
+                materialName: "mock_skipped",
+                materialType: "none",
+                warnings: [...warnings, `Missing required fields: ${params.plan.missingFields.join(", ")}`],
+            };
+        }
+        if (params.plan.blockedByUnsupportedFeatures.length > 0 || params.plan.preset === "katameLike") {
+            return {
+                status: "unsupported",
+                preset: params.plan.preset,
+                materialName: "mock_blocked",
+                materialType: "none",
+                warnings: [...warnings, "Blocked by unsupported features"],
+            };
+        }
+
+        if (dryRun) {
+            return {
+                status: "created",
+                preset: params.plan.preset,
+                materialName: `mock_${params.plan.preset}`,
+                materialType: "StandardMaterial",
+                warnings,
+            };
+        }
+
+        return {
+            status: "created",
+            preset: params.plan.preset,
+            materialName: `mock_${params.plan.preset}`,
+            materialType: "StandardMaterial",
+            warnings,
+            createdMaterial: {
+                name: `mock_${params.plan.preset}`,
+                dispose: vi.fn(),
+            },
+        };
+    },
+    disposeMmeFallbackMaterial(result: { createdMaterial?: { dispose?: () => void } }) {
+        result.createdMaterial?.dispose?.();
+    },
+}));
 
 describe("MmeFallbackController", () => {
     it("starts disabled in preview mode", () => {
@@ -167,6 +230,8 @@ technique Post {
         controller.planApply([
             {
                 effectId: "basic",
+                mesh: createMockMesh("BodyMesh"),
+                matchingPolicy: "single-global-effect",
                 materialName: "mat_body",
                 effect: parseMmeEffectFile({
                     path: "basic.fx",
@@ -177,8 +242,8 @@ technique Post {
         ]);
         controller.setExperimentalApplyEnabled(true);
         expect(controller.applyFallback()).toMatchObject({
-            status: "unsupported",
-            reason: "apply-not-implemented",
+            status: "blocked",
+            reason: "scene-unavailable",
         });
     });
 
@@ -328,6 +393,159 @@ technique Post {
         });
     });
 
+    it("applies a basicToon fallback and reverts it back to the original material", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial("original_mat");
+        const mesh = createMockMesh("BodyMesh", originalMaterial, scene);
+
+        controller.setEnabled(true);
+        controller.setMode("apply");
+        controller.setExperimentalApplyEnabled(true);
+        controller.planApply([
+            {
+                effectId: "basic",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseMmeEffectFile({
+                    path: "basic.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+        ]);
+
+        const applyResult = controller.applyFallback();
+        expect(applyResult).toMatchObject({
+            status: "applied",
+            reason: "apply-succeeded",
+        });
+        const fallbackMaterial = mesh.material as import("@babylonjs/core/Materials/material").Material;
+        expect(fallbackMaterial).not.toBe(originalMaterial);
+        expect(controller.getApplyPlan()?.status).toBe("applied");
+
+        const revertResult = controller.revertApply();
+        expect(revertResult).toMatchObject({
+            status: "reverted",
+            reason: "revert-succeeded",
+        });
+        expect(mesh.material).toBe(originalMaterial);
+        expect(((fallbackMaterial as unknown) as { dispose?: ReturnType<typeof vi.fn> }).dispose).toHaveBeenCalledTimes(1);
+        expect(controller.getApplyPlan()?.status).toBe("reverted");
+    });
+
+    it("blocks apply when any candidate is invalid and leaves all meshes unchanged", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterialA = createMockMaterial("original_a");
+        const originalMaterialB = createMockMaterial("original_b");
+        const meshA = createMockMesh("BodyMesh", originalMaterialA, scene);
+        const meshB = createMockMesh("FaceMesh", originalMaterialB, scene);
+
+        controller.setEnabled(true);
+        controller.setMode("apply");
+        controller.setExperimentalApplyEnabled(true);
+        controller.planApply([
+            {
+                effectId: "basic",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh: meshA,
+                scene,
+                originalMaterial: originalMaterialA,
+                matchingPolicy: "single-global-effect",
+                effect: parseMmeEffectFile({
+                    path: "basic.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+            {
+                effectId: "basic-face",
+                targetName: "Miku",
+                meshName: "FaceMesh",
+                materialName: "FaceMaterial",
+                mesh: meshB,
+                scene,
+                originalMaterial: originalMaterialB,
+                matchingPolicy: "multi-global-effect",
+                effect: parseMmeEffectFile({
+                    path: "basic-face.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+        ]);
+
+        const applyResult = controller.applyFallback();
+        expect(applyResult).toMatchObject({
+            status: "blocked",
+            reason: "apply-targets-invalid",
+        });
+        expect(meshA.material).toBe(originalMaterialA);
+        expect(meshB.material).toBe(originalMaterialB);
+        expect(controller.getApplyPlan()?.status).toBe("planned");
+    });
+
+    it("blocks duplicate same-mesh targets before any mesh.material assignment", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial("original_shared");
+        const mesh = createMockMesh("BodyMesh", originalMaterial, scene);
+
+        controller.setEnabled(true);
+        controller.setMode("apply");
+        controller.setExperimentalApplyEnabled(true);
+        controller.planApply([
+            {
+                effectId: "basic-a",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterialA",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseMmeEffectFile({
+                    path: "basic-a.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+            {
+                effectId: "basic-b",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterialB",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseMmeEffectFile({
+                    path: "basic-b.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+        ]);
+
+        const applyResult = controller.applyFallback();
+
+        expect(applyResult).toMatchObject({
+            status: "blocked",
+            reason: "duplicate-mesh-target",
+        });
+        expect(mesh.material).toBe(originalMaterial);
+        expect(((originalMaterial as unknown) as { dispose?: ReturnType<typeof vi.fn> }).dispose).not.toHaveBeenCalled();
+        expect(controller.getApplyPlan()?.status).toBe("planned");
+    });
+
     it("dispose clears state", () => {
         const controller = new MmeFallbackController();
         controller.setEnabled(true);
@@ -418,4 +636,23 @@ function createMockMaterialTarget(params: {
         meshName: params.meshName,
         materialSlotIndex: null,
     };
+}
+
+function createMockMesh(
+    name: string,
+    material: import("@babylonjs/core/Materials/material").Material | null = null,
+    scene: import("@babylonjs/core/scene").Scene | null = null,
+): import("@babylonjs/core/Meshes/abstractMesh").AbstractMesh {
+    return {
+        name,
+        material,
+        getScene: scene ? (() => scene) : undefined,
+    } as unknown as import("@babylonjs/core/Meshes/abstractMesh").AbstractMesh;
+}
+
+function createMockMaterial(name: string): import("@babylonjs/core/Materials/material").Material {
+    return {
+        name,
+        dispose: vi.fn(),
+    } as unknown as import("@babylonjs/core/Materials/material").Material;
 }
