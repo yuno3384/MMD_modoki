@@ -121,6 +121,13 @@ export function createMmeFallbackMaterial(params: {
     };
 }
 
+/**
+ * Disposes a fallback material produced by this scaffold.
+ *
+ * Accepts either a full factory result object or a raw Babylon Material instance.
+ * Null/undefined values and dry-run results without a created material are ignored safely.
+ * Callers remain responsible for ensuring the material is no longer in active use before disposal.
+ */
 export function disposeMmeFallbackMaterial(
     resultOrMaterial: MmeFallbackMaterialFactoryResult | Material | null | undefined,
 ): void {
