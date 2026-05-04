@@ -771,8 +771,9 @@ technique Post {
             status: "highlighted",
             reason: "highlight-active",
         });
+        expect(highlightLayerInstances).toHaveLength(1);
         expect(firstLayer.removeMesh).toHaveBeenCalledTimes(1);
-        expect(firstLayer.dispose).toHaveBeenCalledTimes(1);
+        expect(firstLayer.dispose).not.toHaveBeenCalled();
 
         const clearResult = controller.clearHighlight();
         expect(clearResult).toMatchObject({
@@ -780,6 +781,8 @@ technique Post {
             reason: "highlight-cleared",
         });
         expect(controller.getHighlightState().active).toBe(false);
+        expect(firstLayer.removeMesh).toHaveBeenCalledTimes(2);
+        expect(firstLayer.dispose).not.toHaveBeenCalled();
     });
 
     it("dispose clears debug highlight state without mutating mesh materials", () => {
@@ -810,12 +813,14 @@ technique Post {
         });
         controller.buildTargetCandidateView([target], previewPlan);
         controller.highlightSelectedCandidate("model::model.pmx::BodyMesh::BodyMaterial::single", [target]);
+        const layer = highlightLayerInstances[0];
 
         controller.dispose();
 
         expect(controller.getHighlightState()).toMatchObject({
             active: false,
         });
+        expect(layer.dispose).toHaveBeenCalledTimes(1);
         expect(target.mesh.material).toBe(originalMaterial);
     });
 });

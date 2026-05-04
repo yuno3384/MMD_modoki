@@ -165,8 +165,6 @@ type ActiveMmeFallbackHighlight = {
     readonly candidateId: string;
     readonly targetId: string;
     readonly mesh: Mesh;
-    readonly scene: Scene;
-    readonly layer: HighlightLayer;
 };
 
 export class MmeFallbackController {
@@ -180,6 +178,8 @@ export class MmeFallbackController {
     private applyPlan: MmeFallbackApplyTransaction | null = null;
     private readonly ownedFactoryResults = new Set<MmeFallbackMaterialFactoryResult>();
     private activeHighlight: ActiveMmeFallbackHighlight | null = null;
+    private highlightLayer: HighlightLayer | null = null;
+    private highlightLayerScene: Scene | null = null;
     private highlightState: MmeFallbackHighlightState = {
         active: false,
         candidateId: null,
@@ -415,15 +415,13 @@ export class MmeFallbackController {
             };
         }
 
-        const layer = new HighlightLayer("mme-fallback-debug-highlight", scene);
-        layer.addMesh(mesh, new Color3(0.3, 0.7, 1));
+        const reusableLayer = this.getOrCreateHighlightLayer(scene);
+        reusableLayer.addMesh(mesh, new Color3(0.3, 0.7, 1));
 
         this.activeHighlight = {
             candidateId,
             targetId: candidateId,
             mesh,
-            scene,
-            layer,
         };
         this.highlightState = {
             active: true,
@@ -442,8 +440,7 @@ export class MmeFallbackController {
 
     public clearHighlight(): MmeFallbackHighlightResult {
         if (this.activeHighlight) {
-            this.activeHighlight.layer.removeMesh(this.activeHighlight.mesh);
-            this.activeHighlight.layer.dispose();
+            this.highlightLayer?.removeMesh(this.activeHighlight.mesh);
             this.activeHighlight = null;
         }
         this.highlightState = {
@@ -727,6 +724,7 @@ export class MmeFallbackController {
         this.clearApplyPlan();
         this.clearTargetCandidates();
         this.clearHighlight();
+        this.disposeHighlightLayer();
         this.disposeOwnedFactoryResults();
     }
 
@@ -735,6 +733,22 @@ export class MmeFallbackController {
             disposeMmeFallbackMaterial(result);
         }
         this.ownedFactoryResults.clear();
+    }
+
+    private getOrCreateHighlightLayer(scene: Scene): HighlightLayer {
+        if (this.highlightLayer && this.highlightLayerScene === scene) {
+            return this.highlightLayer;
+        }
+        this.disposeHighlightLayer();
+        this.highlightLayer = new HighlightLayer("mme-fallback-debug-highlight", scene);
+        this.highlightLayerScene = scene;
+        return this.highlightLayer;
+    }
+
+    private disposeHighlightLayer(): void {
+        this.highlightLayer?.dispose();
+        this.highlightLayer = null;
+        this.highlightLayerScene = null;
     }
 
     private buildPlannedTargets(
