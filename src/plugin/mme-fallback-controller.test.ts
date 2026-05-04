@@ -62,8 +62,13 @@ vi.mock("./mme-fallback-material-factory", () => ({
             },
         };
     },
-    disposeMmeFallbackMaterial(result: { createdMaterial?: { dispose?: () => void } }) {
-        result.createdMaterial?.dispose?.();
+    disposeMmeFallbackMaterial(resultOrMaterial: { createdMaterial?: { dispose?: () => void }; dispose?: () => void } | null | undefined) {
+        if (!resultOrMaterial) return;
+        if ("createdMaterial" in resultOrMaterial) {
+            resultOrMaterial.createdMaterial?.dispose?.();
+            return;
+        }
+        resultOrMaterial.dispose?.();
     },
 }));
 

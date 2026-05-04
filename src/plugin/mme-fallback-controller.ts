@@ -491,7 +491,7 @@ export class MmeFallbackController {
         for (const record of this.applyPlan.targetRecords) {
             record.mesh.material = record.originalMaterial;
             if (record.createdFallbackMaterial) {
-                record.createdFallbackMaterial.dispose();
+                disposeMmeFallbackMaterial(record.createdFallbackMaterial);
             }
         }
 

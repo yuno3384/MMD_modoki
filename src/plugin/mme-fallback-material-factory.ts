@@ -121,8 +121,25 @@ export function createMmeFallbackMaterial(params: {
     };
 }
 
-export function disposeMmeFallbackMaterial(result: MmeFallbackMaterialFactoryResult): void {
-    result.createdMaterial?.dispose();
+export function disposeMmeFallbackMaterial(
+    resultOrMaterial: MmeFallbackMaterialFactoryResult | Material | null | undefined,
+): void {
+    if (!resultOrMaterial) {
+        return;
+    }
+
+    if (isFactoryResult(resultOrMaterial)) {
+        resultOrMaterial.createdMaterial?.dispose();
+        return;
+    }
+
+    resultOrMaterial.dispose();
+}
+
+function isFactoryResult(
+    value: MmeFallbackMaterialFactoryResult | Material,
+): value is MmeFallbackMaterialFactoryResult {
+    return "status" in value && "materialType" in value;
 }
 
 function buildFallbackMaterialName(
