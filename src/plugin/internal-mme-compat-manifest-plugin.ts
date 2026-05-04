@@ -3,8 +3,10 @@ import { pluginUiRegistry } from "./ui-registry";
 import {
     buildHighlightPlanForCandidate,
     MmeFallbackController,
+    type MmeFallbackApplyAvailability,
     type MmeFallbackControllerState,
     type MmeFallbackHighlightPlan,
+    type MmeFallbackPreviewPlanItem,
     type MmeFallbackTargetCandidate,
 } from "./mme-fallback-controller";
 import {
@@ -34,7 +36,7 @@ export type MmePickerRegistrationSummary = {
     readonly warnings: readonly string[];
 };
 
-export type MmeCompatApplyStatus = "disabled" | "preview-only" | "experimental-disabled" | "apply not implemented";
+export type MmeCompatApplyStatus = "disabled" | "preview-only" | "experimental-disabled" | "experimental-ready";
 export type MmeCandidateFilterKind = "all" | "model" | "accessory";
 export type MmeCandidateFilterPreset = "all" | "basicToon" | "textureToon" | "katameLike" | "emissiveLite" | "unsupported" | "none";
 export type MmeCandidateFilterStatus = "all" | "global-effect-candidate" | "unsupported" | "unmatched";
@@ -55,6 +57,16 @@ export type MmeCandidateDetailState = {
 
 export type MmeCandidateHighlightDetailState = MmeCandidateDetailState & {
     readonly highlightPlan: MmeFallbackHighlightPlan;
+};
+
+export type MmeCompatApplyButtonState = {
+    readonly enabled: boolean;
+    readonly label: string;
+};
+
+export type MmeCompatRevertButtonState = {
+    readonly enabled: boolean;
+    readonly label: string;
 };
 
 export type InternalMmeCompatManifestPlugin = ScenePlugin & {
@@ -92,6 +104,7 @@ export function createInternalMmeCompatManifestPlugin(
     let lastPickerWarnings: string[] = [];
     let lastPickerAcceptedCount = 0;
     let selectedCandidateId: string | null = null;
+    let lastApplyActionMessage: string | null = null;
     let candidateViewOptions: MmeCandidateViewOptions = {
         kind: "all",
         preset: "all",
@@ -106,6 +119,7 @@ export function createInternalMmeCompatManifestPlugin(
         lastPickerWarnings = [];
         lastPickerAcceptedCount = 0;
         selectedCandidateId = null;
+        lastApplyActionMessage = null;
         fallbackController.setEnabled(false);
         fallbackController.setExperimentalApplyEnabled(false);
         rerenderPanels();
@@ -192,13 +206,13 @@ export function createInternalMmeCompatManifestPlugin(
 
         const controllerState = fallbackController.getState();
         const applyGateStatus = fallbackController.getApplyGateStatus();
-        const applyPlan = fallbackController.getApplyPlan();
+        const currentApplyPlan = fallbackController.getApplyPlan();
+        const sceneMaterialTargets = options.getSceneMaterialTargets?.() ?? [];
         appendSummaryRow(summary, "Fallback Preview", controllerState.enabled ? "ON" : "OFF");
         appendSummaryRow(summary, "Fallback Mode", controllerState.mode);
         appendSummaryRow(summary, "Preview Targets", String(controllerState.plannedTargets.length));
         appendSummaryRow(summary, "Experimental Apply Gate", applyGateStatus.experimentalApplyEnabled ? "ON" : "OFF");
         appendSummaryRow(summary, "Apply Status", getMmeCompatApplyStatus(controllerState));
-        appendSummaryRow(summary, "Apply Plan Targets", String(applyPlan?.targetRecords.length ?? 0));
 
         const controls = document.createElement("div");
         controls.style.display = "grid";
@@ -214,12 +228,13 @@ export function createInternalMmeCompatManifestPlugin(
         previewCheckbox.type = "checkbox";
         previewCheckbox.checked = controllerState.enabled;
         previewCheckbox.addEventListener("change", () => {
-            fallbackController.setMode("preview");
             if (previewCheckbox.checked) {
+                fallbackController.setMode("preview");
                 fallbackController.setEnabled(true);
             } else {
                 fallbackController.setEnabled(false);
                 selectedCandidateId = null;
+                lastApplyActionMessage = null;
             }
             rerenderPanels();
         });
@@ -227,16 +242,24 @@ export function createInternalMmeCompatManifestPlugin(
         previewToggle.appendChild(document.createTextNode("Enable Dry-Run Preview (diagnostic only)"));
 
         const modeSelect = document.createElement("select");
-        modeSelect.disabled = true;
         const previewOption = document.createElement("option");
         previewOption.value = "preview";
         previewOption.textContent = "preview";
         const applyOption = document.createElement("option");
         applyOption.value = "apply";
-        applyOption.textContent = "apply (TODO)";
+        applyOption.textContent = "apply (experimental, basicToon only)";
         modeSelect.appendChild(previewOption);
         modeSelect.appendChild(applyOption);
         modeSelect.value = controllerState.mode;
+        modeSelect.disabled = !(controllerState.enabled && applyGateStatus.experimentalApplyEnabled);
+        modeSelect.addEventListener("change", () => {
+            const nextMode = modeSelect.value === "apply" && applyGateStatus.experimentalApplyEnabled
+                ? "apply"
+                : "preview";
+            fallbackController.setMode(nextMode);
+            lastApplyActionMessage = null;
+            rerenderPanels();
+        });
 
         controls.appendChild(previewToggle);
         controls.appendChild(modeSelect);
@@ -252,18 +275,15 @@ export function createInternalMmeCompatManifestPlugin(
         experimentalApplyCheckbox.checked = applyGateStatus.experimentalApplyEnabled;
         experimentalApplyCheckbox.addEventListener("change", () => {
             fallbackController.setExperimentalApplyEnabled(experimentalApplyCheckbox.checked);
+            if (!experimentalApplyCheckbox.checked && fallbackController.getState().mode === "apply") {
+                fallbackController.setMode("preview");
+            }
+            lastApplyActionMessage = null;
             rerenderPanels();
         });
         experimentalApplyToggle.appendChild(experimentalApplyCheckbox);
-        experimentalApplyToggle.appendChild(document.createTextNode("Experimental Apply Gate (opt-in only, no material application implemented yet)"));
+        experimentalApplyToggle.appendChild(document.createTextNode("Experimental Apply Gate (debug-only, undoable basicToon apply path, explicit opt-in required)"));
         summary.appendChild(experimentalApplyToggle);
-
-        const applyButton = document.createElement("button");
-        applyButton.type = "button";
-        applyButton.disabled = true;
-        applyButton.textContent = "Apply Fallback (TODO)";
-        applyButton.style.marginTop = "4px";
-        summary.appendChild(applyButton);
 
         const parsedEffects = Object.values(manifest.parsedEffects);
         if (parsedEffects.length > 0) {
@@ -278,10 +298,13 @@ export function createInternalMmeCompatManifestPlugin(
 
             if (controllerState.enabled) {
                 const previewPlan = fallbackController.buildPreviewPlan(buildPreviewInputsFromManifest(manifest), { manifest });
-                const targetCandidates = fallbackController.buildTargetCandidateView(
-                    options.getSceneMaterialTargets?.() ?? [],
-                    previewPlan,
-                );
+                const targetCandidates = fallbackController.buildTargetCandidateView(sceneMaterialTargets, previewPlan);
+                const applyInputs = buildApplyInputsFromTargetsAndPreviewPlan(sceneMaterialTargets, previewPlan, manifest);
+                const applyPlan = currentApplyPlan?.status === "applied"
+                    ? currentApplyPlan
+                    : fallbackController.planApply(applyInputs, { manifest });
+                const applyAvailability = fallbackController.getApplyAvailability();
+                const revertEnabled = applyPlan?.status === "applied";
                 const parsedSummary = document.createElement("pre");
                 parsedSummary.textContent = JSON.stringify(previewPlan.map((entry) => ({
                     path: entry.effectId,
@@ -308,8 +331,52 @@ export function createInternalMmeCompatManifestPlugin(
                 candidateNotice.style.marginTop = "8px";
                 candidateNotice.style.fontSize = "12px";
                 candidateNotice.style.opacity = "0.75";
-                candidateNotice.textContent = "Scene material target candidates. Read-only dry-run view only; no fallback material is applied.";
+                candidateNotice.textContent = "Scene material target candidates. Read-only dry-run by default; experimental debug apply is limited to undoable basicToon single-global-effect candidates.";
                 summary.appendChild(candidateNotice);
+
+                appendSummaryRow(summary, "Apply Plan Targets", String(applyPlan?.targetRecords.length ?? 0));
+
+                const applyControlNotice = document.createElement("div");
+                applyControlNotice.style.marginTop = "8px";
+                applyControlNotice.style.fontSize = "12px";
+                applyControlNotice.style.opacity = "0.75";
+                applyControlNotice.textContent = "Experimental debug apply. basicToon only, single-global-effect only, undoable, and routed through controller guards.";
+                summary.appendChild(applyControlNotice);
+
+                const applyControls = document.createElement("div");
+                applyControls.style.display = "flex";
+                applyControls.style.gap = "8px";
+                applyControls.style.marginTop = "6px";
+
+                const applyButton = document.createElement("button");
+                applyButton.type = "button";
+                const applyButtonState = getMmeCompatApplyButtonState(applyAvailability);
+                applyButton.disabled = !applyButtonState.enabled;
+                applyButton.textContent = applyButtonState.label;
+                applyButton.addEventListener("click", () => {
+                    const result = fallbackController.applyFallback();
+                    lastApplyActionMessage = formatMmeCompatActionResult("Apply", result.status, result.reason, result.warnings);
+                    rerenderPanels();
+                });
+                applyControls.appendChild(applyButton);
+
+                const revertButton = document.createElement("button");
+                revertButton.type = "button";
+                const revertButtonState = getMmeCompatRevertButtonState(revertEnabled);
+                revertButton.disabled = !revertButtonState.enabled;
+                revertButton.textContent = revertButtonState.label;
+                revertButton.addEventListener("click", () => {
+                    const result = fallbackController.revertApply();
+                    lastApplyActionMessage = formatMmeCompatActionResult("Revert", result.status, result.reason, result.warnings);
+                    rerenderPanels();
+                });
+                applyControls.appendChild(revertButton);
+
+                summary.appendChild(applyControls);
+
+                if (lastApplyActionMessage) {
+                    appendSummaryRow(summary, "Last Apply/Revert Result", lastApplyActionMessage);
+                }
 
                 appendSummaryRow(summary, "Scene Target Candidates", String(targetCandidates.length));
 
@@ -712,7 +779,27 @@ export function getMmeCompatApplyStatus(state: Pick<MmeFallbackControllerState, 
     if (!state.experimentalApplyEnabled) {
         return "experimental-disabled";
     }
-    return "apply not implemented";
+    return "experimental-ready";
+}
+
+export function getMmeCompatApplyButtonState(
+    availability: MmeFallbackApplyAvailability,
+): MmeCompatApplyButtonState {
+    return {
+        enabled: availability.enabled,
+        label: availability.enabled
+            ? "Apply Fallback (experimental basicToon)"
+            : "Apply Fallback (guarded)",
+    };
+}
+
+export function getMmeCompatRevertButtonState(hasAppliedTransaction: boolean): MmeCompatRevertButtonState {
+    return {
+        enabled: hasAppliedTransaction,
+        label: hasAppliedTransaction
+            ? "Revert Fallback"
+            : "Revert Fallback (waiting for applied transaction)",
+    };
 }
 
 export function filterAndSortMmeTargetCandidates(
@@ -791,6 +878,52 @@ function buildPreviewInputsFromManifest(manifest: MMEManifest) {
         materialName: effect.path.split("/").pop() ?? effect.path,
         sourcePath: effect.path,
     }));
+}
+
+function buildApplyInputsFromTargetsAndPreviewPlan(
+    targets: readonly MaterialEffectTarget[],
+    previewPlan: readonly MmeFallbackPreviewPlanItem[],
+    manifest: MMEManifest,
+) {
+    if (targets.length === 0 || previewPlan.length === 0) {
+        return [];
+    }
+
+    const matchingPolicy: "single-global-effect" | "multi-global-effect" = previewPlan.length === 1
+        ? "single-global-effect"
+        : "multi-global-effect";
+
+    return targets.flatMap((target) => previewPlan.flatMap((entry) => {
+        const effect = manifest.parsedEffects[entry.effectId];
+        if (!effect) {
+            return [];
+        }
+
+        return [{
+            effectId: entry.effectId,
+            effect,
+            targetName: target.kind === "model" ? (target.modelName ?? target.name) : (target.accessoryName ?? target.name),
+            meshName: target.meshName,
+            materialName: target.materialName,
+            mesh: target.mesh,
+            originalMaterial: target.material,
+            matchingPolicy,
+            sourcePath: target.sourcePath,
+            scene: typeof (target.mesh as { getScene?: () => unknown }).getScene === "function"
+                ? ((target.mesh as { getScene: () => unknown }).getScene() as import("@babylonjs/core/scene").Scene | null)
+                : null,
+        }];
+    }));
+}
+
+function formatMmeCompatActionResult(
+    action: "Apply" | "Revert",
+    status: string,
+    reason: string,
+    warnings: readonly string[],
+): string {
+    const warningSuffix = warnings.length > 0 ? ` | ${warnings.join(" ; ")}` : "";
+    return `${action}: ${status} (${reason})${warningSuffix}`;
 }
 
 function summarizeTargetCandidates(candidates: readonly MmeFallbackTargetCandidate[]) {

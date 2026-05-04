@@ -3,9 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
     createInternalMmeCompatManifestPlugin,
     filterAndSortMmeTargetCandidates,
+    getMmeCompatApplyButtonState,
     getSelectedMmeTargetCandidateDetail,
     getSelectedMmeTargetCandidateHighlightDetail,
     getMmeCompatApplyStatus,
+    getMmeCompatRevertButtonState,
     getMmeFilePathFromPickerFile,
     registerPickedMmeFiles,
     syncSelectedMmeTargetCandidateId,
@@ -159,7 +161,37 @@ describe("InternalMmeCompatManifestPlugin", () => {
             enabled: true,
             mode: "apply",
             experimentalApplyEnabled: true,
-        })).toBe("apply not implemented");
+        })).toBe("experimental-ready");
+    });
+
+    it("enables apply/revert button labels only through guarded pure helper state", () => {
+        expect(getMmeCompatApplyButtonState({
+            enabled: false,
+            reason: "experimental-apply-disabled",
+            warnings: ["Experimental fallback apply opt-in is disabled"],
+        })).toEqual({
+            enabled: false,
+            label: "Apply Fallback (guarded)",
+        });
+
+        expect(getMmeCompatApplyButtonState({
+            enabled: true,
+            reason: "apply-ready",
+            warnings: [],
+        })).toEqual({
+            enabled: true,
+            label: "Apply Fallback (experimental basicToon)",
+        });
+
+        expect(getMmeCompatRevertButtonState(false)).toEqual({
+            enabled: false,
+            label: "Revert Fallback (waiting for applied transaction)",
+        });
+
+        expect(getMmeCompatRevertButtonState(true)).toEqual({
+            enabled: true,
+            label: "Revert Fallback",
+        });
     });
 
     it("prefers webkitRelativePath for picked files when available", () => {
