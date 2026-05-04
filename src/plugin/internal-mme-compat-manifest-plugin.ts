@@ -36,7 +36,6 @@ export type MmePickerRegistrationSummary = {
     readonly warnings: readonly string[];
 };
 
-export type MmeCompatApplyStatus = "disabled" | "preview-only" | "experimental-disabled" | "experimental-ready";
 export type MmeCandidateFilterKind = "all" | "model" | "accessory";
 export type MmeCandidateFilterPreset = "all" | "basicToon" | "textureToon" | "katameLike" | "emissiveLite" | "unsupported" | "none";
 export type MmeCandidateFilterStatus = "all" | "global-effect-candidate" | "unsupported" | "unmatched";
@@ -212,7 +211,6 @@ export function createInternalMmeCompatManifestPlugin(
         appendSummaryRow(summary, "Fallback Mode", controllerState.mode);
         appendSummaryRow(summary, "Preview Targets", String(controllerState.plannedTargets.length));
         appendSummaryRow(summary, "Experimental Apply Gate", applyGateStatus.experimentalApplyEnabled ? "ON" : "OFF");
-        appendSummaryRow(summary, "Apply Status", getMmeCompatApplyStatus(controllerState));
 
         const controls = document.createElement("div");
         controls.style.display = "grid";
@@ -305,6 +303,7 @@ export function createInternalMmeCompatManifestPlugin(
                     : fallbackController.planApply(applyInputs, { manifest });
                 const applyAvailability = fallbackController.getApplyAvailability();
                 const revertEnabled = applyPlan?.status === "applied";
+                appendSummaryRow(summary, "Apply Status", getMmeCompatApplyStatus(controllerState, applyAvailability));
                 const parsedSummary = document.createElement("pre");
                 parsedSummary.textContent = JSON.stringify(previewPlan.map((entry) => ({
                     path: entry.effectId,
@@ -591,7 +590,11 @@ export function createInternalMmeCompatManifestPlugin(
                     emptyCandidates.style.opacity = "0.75";
                     summary.appendChild(emptyCandidates);
                 }
+            } else {
+                appendSummaryRow(summary, "Apply Status", getMmeCompatApplyStatus(controllerState));
             }
+        } else {
+            appendSummaryRow(summary, "Apply Status", getMmeCompatApplyStatus(controllerState));
         }
 
         const details = document.createElement("pre");
@@ -769,7 +772,10 @@ export async function registerPickedMmeFiles(params: {
     };
 }
 
-export function getMmeCompatApplyStatus(state: Pick<MmeFallbackControllerState, "enabled" | "mode" | "experimentalApplyEnabled">): MmeCompatApplyStatus {
+export function getMmeCompatApplyStatus(
+    state: Pick<MmeFallbackControllerState, "enabled" | "mode" | "experimentalApplyEnabled">,
+    availability?: MmeFallbackApplyAvailability,
+): string {
     if (!state.enabled) {
         return "disabled";
     }
@@ -779,7 +785,13 @@ export function getMmeCompatApplyStatus(state: Pick<MmeFallbackControllerState, 
     if (!state.experimentalApplyEnabled) {
         return "experimental-disabled";
     }
-    return "experimental-ready";
+    if (!availability) {
+        return "experimental-apply-pending";
+    }
+    if (!availability.enabled) {
+        return availability.reason;
+    }
+    return "ready (experimental basicToon apply)";
 }
 
 export function getMmeCompatApplyButtonState(

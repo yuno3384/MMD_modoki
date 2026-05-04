@@ -138,7 +138,7 @@ describe("InternalMmeCompatManifestPlugin", () => {
         expect(detail.highlightPlan.targetId).toBeNull();
     });
 
-    it("formats apply status with the experimental gate priority", () => {
+    it("formats apply status with controller availability reasons when provided", () => {
         expect(getMmeCompatApplyStatus({
             enabled: false,
             mode: "preview",
@@ -161,7 +161,21 @@ describe("InternalMmeCompatManifestPlugin", () => {
             enabled: true,
             mode: "apply",
             experimentalApplyEnabled: true,
-        })).toBe("experimental-ready");
+        }, {
+            enabled: false,
+            reason: "apply-plan-missing",
+            warnings: ["Fallback apply requires an explicit apply plan"],
+        })).toBe("apply-plan-missing");
+
+        expect(getMmeCompatApplyStatus({
+            enabled: true,
+            mode: "apply",
+            experimentalApplyEnabled: true,
+        }, {
+            enabled: true,
+            reason: "apply-ready",
+            warnings: [],
+        })).toBe("ready (experimental basicToon apply)");
     });
 
     it("enables apply/revert button labels only through guarded pure helper state", () => {
