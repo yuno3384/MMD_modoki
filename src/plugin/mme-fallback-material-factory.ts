@@ -167,6 +167,8 @@ function applyScaffoldMaterialValues(
     const diffuseColor = parseColorValue(mappedFields.diffuseColor?.value ?? null);
     const emissiveColor = parseColorValue(mappedFields.emissiveColor?.value ?? null);
     const alphaValue = parseScalarValue(mappedFields.alpha?.value ?? null);
+    const specularColor = parseColorValue(mappedFields.specularColor?.value ?? null);
+    const specularIntensity = parseScalarValue(mappedFields.specularIntensity?.value ?? null);
 
     if (diffuseColor) {
         material.diffuseColor = diffuseColor.color;
@@ -174,16 +176,24 @@ function applyScaffoldMaterialValues(
             material.alpha = diffuseColor.alpha;
         }
     }
-    if (emissiveColor) {
-        material.emissiveColor = emissiveColor.color;
-    }
     if (alphaValue !== null) {
-        material.alpha = alphaValue;
+        material.alpha = clampUnit(alphaValue);
+    }
+
+    if (plan.preset === "basicToon") {
+        if (specularColor) {
+            material.specularColor = specularColor.color;
+        }
+        if (specularIntensity !== null) {
+            material.specularPower = toSafeSpecularPower(specularIntensity);
+        }
     }
 
     if (plan.preset === "emissiveLite" && emissiveColor === null) {
         material.emissiveColor = new Color3(0.1, 0.1, 0.1);
         warnings.push("Emissive fallback scaffold used a minimal default emissive color");
+    } else if (plan.preset === "emissiveLite" && emissiveColor) {
+        material.emissiveColor = emissiveColor.color;
     }
 
     if (plan.preset === "textureToon") {
@@ -197,8 +207,12 @@ function parseColorValue(value: string | null): { color: Color3; alpha: number |
     if (numbers.length < 3) return null;
     const [r, g, b, a] = numbers;
     return {
-        color: new Color3(r, g, b),
-        alpha: typeof a === "number" ? a : null,
+        color: new Color3(
+            normalizeColorComponent(r),
+            normalizeColorComponent(g),
+            normalizeColorComponent(b),
+        ),
+        alpha: typeof a === "number" ? clampUnit(normalizeColorComponent(a)) : null,
     };
 }
 
@@ -212,4 +226,28 @@ function extractNumericComponents(value: string): number[] {
     return Array.from(value.matchAll(/-?\d+(?:\.\d+)?/g))
         .map((match) => Number(match[0]))
         .filter((numberValue) => Number.isFinite(numberValue));
+}
+
+function normalizeColorComponent(value: number): number {
+    if (value <= 1 && value >= 0) {
+        return value;
+    }
+    if (value > 1 && value <= 255) {
+        return clampUnit(value / 255);
+    }
+    return clampUnit(value);
+}
+
+function clampUnit(value: number): number {
+    return Math.min(1, Math.max(0, value));
+}
+
+function toSafeSpecularPower(value: number): number {
+    if (!Number.isFinite(value)) {
+        return 0;
+    }
+    if (value >= 0 && value <= 1) {
+        return Math.min(128, Math.max(0, value * 64));
+    }
+    return Math.min(128, Math.max(0, value));
 }
