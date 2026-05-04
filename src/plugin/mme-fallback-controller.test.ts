@@ -215,18 +215,30 @@ technique Post {
     it("guards apply path unless explicitly enabled and switched to apply mode", () => {
         const controller = new MmeFallbackController();
 
+        expect(controller.getApplyAvailability()).toMatchObject({
+            available: false,
+            reason: "controller-disabled",
+        });
         expect(controller.applyFallback()).toMatchObject({
             status: "blocked",
             reason: "controller-disabled",
         });
 
         controller.setEnabled(true);
+        expect(controller.getApplyAvailability()).toMatchObject({
+            available: false,
+            reason: "not-apply-mode",
+        });
         expect(controller.applyFallback()).toMatchObject({
             status: "blocked",
             reason: "not-apply-mode",
         });
 
         controller.setMode("apply");
+        expect(controller.getApplyAvailability()).toMatchObject({
+            available: false,
+            reason: "experimental-apply-disabled",
+        });
         expect(controller.applyFallback()).toMatchObject({
             status: "blocked",
             reason: "experimental-apply-disabled",
@@ -246,6 +258,10 @@ technique Post {
             },
         ]);
         controller.setExperimentalApplyEnabled(true);
+        expect(controller.getApplyAvailability()).toMatchObject({
+            available: true,
+            reason: "apply-ready",
+        });
         expect(controller.applyFallback()).toMatchObject({
             status: "blocked",
             reason: "scene-unavailable",

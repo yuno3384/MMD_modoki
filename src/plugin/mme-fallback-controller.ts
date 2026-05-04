@@ -66,6 +66,12 @@ export type MmeFallbackApplyGateStatus = {
     readonly experimentalApplyEnabled: boolean;
 };
 
+export type MmeFallbackApplyAvailability = {
+    readonly available: boolean;
+    readonly reason: string;
+    readonly warnings: readonly string[];
+};
+
 export type MmeFallbackRevertResult = {
     readonly status: "noop" | "blocked" | "reverted";
     readonly reason: string;
@@ -322,41 +328,66 @@ export class MmeFallbackController {
         return this.applyPlan;
     }
 
-    public applyFallback(): MmeFallbackApplyResult {
+    public getApplyAvailability(): MmeFallbackApplyAvailability {
         if (!this.enabled) {
             return {
-                status: "blocked",
+                available: false,
                 reason: "controller-disabled",
                 warnings: ["Fallback apply controller is disabled"],
             };
         }
         if (this.mode !== "apply") {
             return {
-                status: "blocked",
+                available: false,
                 reason: "not-apply-mode",
                 warnings: ["Fallback apply requires apply mode"],
             };
         }
         if (!this.experimentalApplyEnabled) {
             return {
-                status: "blocked",
+                available: false,
                 reason: "experimental-apply-disabled",
                 warnings: ["Experimental fallback apply opt-in is disabled"],
             };
         }
         if (!this.applyPlan) {
             return {
-                status: "blocked",
+                available: false,
                 reason: "apply-plan-missing",
                 warnings: ["Fallback apply requires an explicit apply plan"],
             };
         }
+        if (this.applyPlan.status === "applied") {
+            return {
+                available: false,
+                reason: "transaction-already-applied",
+                warnings: ["Fallback apply transaction is already applied"],
+            };
+        }
+
         const validation = this.validateApplyTransaction(this.applyPlan);
         if (validation.warnings.length > 0) {
             return {
-                status: "blocked",
+                available: false,
                 reason: validation.reason,
                 warnings: validation.warnings,
+            };
+        }
+
+        return {
+            available: true,
+            reason: "apply-ready",
+            warnings: [],
+        };
+    }
+
+    public applyFallback(): MmeFallbackApplyResult {
+        const availability = this.getApplyAvailability();
+        if (!availability.available) {
+            return {
+                status: "blocked",
+                reason: availability.reason,
+                warnings: availability.warnings,
             };
         }
 
