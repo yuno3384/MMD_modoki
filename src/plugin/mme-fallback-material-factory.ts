@@ -185,6 +185,17 @@ function applyScaffoldMaterialValues(
             material.specularColor = specularColor.color;
         }
         if (specularIntensity !== null) {
+            /**
+             * This is intentionally not a physically accurate mapping from MME.
+             *
+             * MME specular semantics are not fully understood or translated here,
+             * so basicToon fallback uses a conservative heuristic instead:
+             * - 0..1 inputs are scaled into a modest StandardMaterial power range
+             * - larger or unknown-style values are clamped into a bounded safe range
+             *
+             * The goal is visual stability and avoiding extreme highlights, not fidelity.
+             */
+            // Bound specularPower on purpose so unknown MME values do not create over-shiny fallback materials.
             material.specularPower = toSafeSpecularPower(specularIntensity);
         }
     }
@@ -246,8 +257,10 @@ function toSafeSpecularPower(value: number): number {
     if (!Number.isFinite(value)) {
         return 0;
     }
+    // Treat normalized values as a soft-intensity hint instead of trusting them as Babylon-ready powers.
     if (value >= 0 && value <= 1) {
         return Math.min(128, Math.max(0, value * 64));
     }
+    // Clamp larger values to a stable upper bound instead of passing potentially extreme highlight powers through.
     return Math.min(128, Math.max(0, value));
 }
