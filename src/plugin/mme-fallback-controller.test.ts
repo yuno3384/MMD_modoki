@@ -4,6 +4,24 @@ import { MmeFallbackController } from "./mme-fallback-controller";
 import { parseMmeEffectFile } from "./mme-fx-parser";
 import type { MaterialEffectTarget } from "./material-targets";
 
+const highlightLayerInstances: Array<{
+    readonly addMesh: ReturnType<typeof vi.fn>;
+    readonly removeMesh: ReturnType<typeof vi.fn>;
+    readonly dispose: ReturnType<typeof vi.fn>;
+}> = [];
+
+vi.mock("@babylonjs/core/Layers/highlightLayer", () => ({
+    HighlightLayer: class MockHighlightLayer {
+        public readonly addMesh = vi.fn();
+        public readonly removeMesh = vi.fn();
+        public readonly dispose = vi.fn();
+
+        public constructor() {
+            highlightLayerInstances.push(this);
+        }
+    },
+}));
+
 vi.mock("./mme-fallback-material-factory", () => ({
     createMmeFallbackMaterial(params: {
         dryRun?: boolean;
@@ -615,6 +633,191 @@ technique Post {
         expect(controller.getApplyPlan()).toBeNull();
         expect(controller.getTargetCandidates()).toEqual([]);
     });
+
+    it("does not allow debug highlight for unmatched or multi-global candidates", () => {
+        const controller = new MmeFallbackController();
+        controller.setEnabled(true);
+        const unmatchedTargets = [
+            createMockMaterialTarget({
+                kind: "model",
+                ownerName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                sourcePath: "model.pmx",
+            }),
+        ];
+        controller.buildTargetCandidateView(unmatchedTargets, []);
+
+        expect(controller.getHighlightAvailability("model::model.pmx::BodyMesh::BodyMaterial::single", unmatchedTargets)).toMatchObject({
+            available: false,
+            reason: "candidate-unmatched",
+        });
+
+        const multiController = new MmeFallbackController();
+        multiController.setEnabled(true);
+        const previewPlan = multiController.buildPreviewPlan([
+            {
+                effectId: "basic-a",
+                materialName: "BodyMaterial",
+                effect: parseMmeEffectFile({
+                    path: "basic-a.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+            {
+                effectId: "basic-b",
+                materialName: "BodyMaterial",
+                effect: parseMmeEffectFile({
+                    path: "basic-b.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+        ]);
+        const targets = [
+            createMockMaterialTarget({
+                kind: "model",
+                ownerName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                sourcePath: "model.pmx",
+            }),
+        ];
+        multiController.buildTargetCandidateView(targets, previewPlan);
+        expect(multiController.getHighlightAvailability("model::model.pmx::BodyMesh::BodyMaterial::single", targets)).toMatchObject({
+            available: false,
+            reason: "effect-binding-not-precise",
+        });
+    });
+
+    it("blocks debug highlight when the candidate mesh cannot be resolved", () => {
+        const controller = new MmeFallbackController();
+        controller.setEnabled(true);
+        const previewPlan = controller.buildPreviewPlan([
+            {
+                effectId: "basic",
+                materialName: "BodyMaterial",
+                effect: parseMmeEffectFile({
+                    path: "basic.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+        ]);
+        const targetWithoutScene = createMockMaterialTarget({
+            kind: "model",
+            ownerName: "Miku",
+            meshName: "BodyMesh",
+            materialName: "BodyMaterial",
+            sourcePath: "model.pmx",
+        });
+        controller.buildTargetCandidateView([targetWithoutScene], previewPlan);
+
+        expect(controller.getHighlightAvailability("model::model.pmx::BodyMesh::BodyMaterial::single", [targetWithoutScene])).toMatchObject({
+            available: false,
+            reason: "scene-unavailable",
+        });
+    });
+
+    it("replaces previous debug highlight and clears it safely", () => {
+        highlightLayerInstances.length = 0;
+        const controller = new MmeFallbackController();
+        controller.setEnabled(true);
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const previewPlan = controller.buildPreviewPlan([
+            {
+                effectId: "basic",
+                materialName: "BodyMaterial",
+                effect: parseMmeEffectFile({
+                    path: "basic.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+        ]);
+        const targetA = createMockMaterialTarget({
+            kind: "model",
+            ownerName: "Miku",
+            meshName: "BodyMesh",
+            materialName: "BodyMaterial",
+            sourcePath: "model.pmx",
+            scene,
+        });
+        const targetB = createMockMaterialTarget({
+            kind: "accessory",
+            ownerName: "Accessory",
+            meshName: "AccessoryMesh",
+            materialName: "AccessoryMaterial",
+            sourcePath: "ray.x",
+            scene,
+        });
+        const targets = [targetA, targetB];
+        controller.buildTargetCandidateView(targets, previewPlan);
+
+        const firstResult = controller.highlightSelectedCandidate("model::model.pmx::BodyMesh::BodyMaterial::single", targets);
+        expect(firstResult).toMatchObject({
+            status: "highlighted",
+            reason: "highlight-active",
+        });
+        expect(controller.getHighlightState()).toMatchObject({
+            active: true,
+            candidateId: "model::model.pmx::BodyMesh::BodyMaterial::single",
+        });
+
+        const firstLayer = highlightLayerInstances[0];
+        const secondResult = controller.highlightSelectedCandidate("accessory::ray.x::AccessoryMesh::AccessoryMaterial::single", targets);
+        expect(secondResult).toMatchObject({
+            status: "highlighted",
+            reason: "highlight-active",
+        });
+        expect(firstLayer.removeMesh).toHaveBeenCalledTimes(1);
+        expect(firstLayer.dispose).toHaveBeenCalledTimes(1);
+
+        const clearResult = controller.clearHighlight();
+        expect(clearResult).toMatchObject({
+            status: "cleared",
+            reason: "highlight-cleared",
+        });
+        expect(controller.getHighlightState().active).toBe(false);
+    });
+
+    it("dispose clears debug highlight state without mutating mesh materials", () => {
+        highlightLayerInstances.length = 0;
+        const controller = new MmeFallbackController();
+        controller.setEnabled(true);
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial("original_body");
+        const previewPlan = controller.buildPreviewPlan([
+            {
+                effectId: "basic",
+                materialName: "BodyMaterial",
+                effect: parseMmeEffectFile({
+                    path: "basic.fx",
+                    kind: "fx",
+                    text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+                }),
+            },
+        ]);
+        const target = createMockMaterialTarget({
+            kind: "model",
+            ownerName: "Miku",
+            meshName: "BodyMesh",
+            materialName: "BodyMaterial",
+            sourcePath: "model.pmx",
+            scene,
+            material: originalMaterial,
+        });
+        controller.buildTargetCandidateView([target], previewPlan);
+        controller.highlightSelectedCandidate("model::model.pmx::BodyMesh::BodyMaterial::single", [target]);
+
+        controller.dispose();
+
+        expect(controller.getHighlightState()).toMatchObject({
+            active: false,
+        });
+        expect(target.mesh.material).toBe(originalMaterial);
+    });
 });
 
 function createMockMaterialTarget(params: {
@@ -623,9 +826,15 @@ function createMockMaterialTarget(params: {
     meshName: string;
     materialName: string;
     sourcePath: string;
+    scene?: import("@babylonjs/core/scene").Scene | null;
+    material?: import("@babylonjs/core/Materials/material").Material | null;
 }): MaterialEffectTarget {
-    const mesh = { name: params.meshName, material: null } as unknown as import("@babylonjs/core/Meshes/abstractMesh").AbstractMesh;
-    const material = { name: params.materialName } as unknown as import("@babylonjs/core/Materials/material").Material;
+    const material = params.material ?? ({ name: params.materialName } as unknown as import("@babylonjs/core/Materials/material").Material);
+    const mesh = {
+        name: params.meshName,
+        material,
+        getScene: params.scene ? (() => params.scene) : undefined,
+    } as unknown as import("@babylonjs/core/Meshes/abstractMesh").AbstractMesh;
 
     if (params.kind === "model") {
         return {

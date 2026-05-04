@@ -68,6 +68,11 @@ export type MmeCompatRevertButtonState = {
     readonly label: string;
 };
 
+export type MmeCompatHighlightButtonState = {
+    readonly enabled: boolean;
+    readonly label: string;
+};
+
 export type InternalMmeCompatManifestPlugin = ScenePlugin & {
     getManifest(): MMEManifest | null;
     getCurrentMmeManifest(): MMEManifest | null;
@@ -104,6 +109,7 @@ export function createInternalMmeCompatManifestPlugin(
     let lastPickerAcceptedCount = 0;
     let selectedCandidateId: string | null = null;
     let lastApplyActionMessage: string | null = null;
+    let lastHighlightActionMessage: string | null = null;
     let candidateViewOptions: MmeCandidateViewOptions = {
         kind: "all",
         preset: "all",
@@ -119,6 +125,7 @@ export function createInternalMmeCompatManifestPlugin(
         lastPickerAcceptedCount = 0;
         selectedCandidateId = null;
         lastApplyActionMessage = null;
+        lastHighlightActionMessage = null;
         fallbackController.setEnabled(false);
         fallbackController.setExperimentalApplyEnabled(false);
         rerenderPanels();
@@ -233,6 +240,7 @@ export function createInternalMmeCompatManifestPlugin(
                 fallbackController.setEnabled(false);
                 selectedCandidateId = null;
                 lastApplyActionMessage = null;
+                lastHighlightActionMessage = null;
             }
             rerenderPanels();
         });
@@ -460,8 +468,15 @@ export function createInternalMmeCompatManifestPlugin(
                 summary.appendChild(searchInput);
 
                 const visibleCandidates = filterAndSortMmeTargetCandidates(targetCandidates, candidateViewOptions);
+                const previousSelectedCandidateId = selectedCandidateId;
                 selectedCandidateId = syncSelectedMmeTargetCandidateId(selectedCandidateId, visibleCandidates);
+                if (previousSelectedCandidateId !== selectedCandidateId) {
+                    fallbackController.clearHighlight();
+                    lastHighlightActionMessage = null;
+                }
                 const selectedCandidateDetail = getSelectedMmeTargetCandidateHighlightDetail(visibleCandidates, selectedCandidateId);
+                const highlightAvailability = fallbackController.getHighlightAvailability(selectedCandidateId, sceneMaterialTargets);
+                const highlightState = fallbackController.getHighlightState();
                 appendSummaryRow(summary, "Visible Candidates", String(visibleCandidates.length));
 
                 if (visibleCandidates.length > 0) {
@@ -491,6 +506,10 @@ export function createInternalMmeCompatManifestPlugin(
                             `${candidate.recommendedFallbackPreset} / ${candidate.status}`,
                         ].join(" | ");
                         candidateButton.addEventListener("click", () => {
+                            if (selectedCandidateId !== candidate.targetId) {
+                                fallbackController.clearHighlight();
+                                lastHighlightActionMessage = null;
+                            }
                             selectedCandidateId = candidate.targetId;
                             rerenderPanels();
                         });
@@ -545,7 +564,7 @@ export function createInternalMmeCompatManifestPlugin(
                         highlightLabel.style.marginTop = "8px";
                         highlightLabel.style.fontSize = "12px";
                         highlightLabel.style.opacity = "0.75";
-                        highlightLabel.textContent = "Highlight plan. Planned only; target identity may be known, but highlight remains disabled unless effect binding is precise enough. No scene changes are performed.";
+                        highlightLabel.textContent = "Debug highlight plan. Non-mutating only; no material changes, no camera movement, and no apply path is triggered.";
                         summary.appendChild(highlightLabel);
 
                         const highlightDetail = document.createElement("pre");
@@ -559,6 +578,8 @@ export function createInternalMmeCompatManifestPlugin(
                             highlightable: selectedCandidateDetail.highlightPlan.highlightable,
                             reason: selectedCandidateDetail.highlightPlan.reason,
                             warnings: selectedCandidateDetail.highlightPlan.warnings,
+                            availability: highlightAvailability,
+                            activeHighlightState: highlightState,
                         }, null, 2);
                         highlightDetail.style.margin = "8px 0 0";
                         highlightDetail.style.padding = "8px";
@@ -569,12 +590,41 @@ export function createInternalMmeCompatManifestPlugin(
                         highlightDetail.style.borderRadius = "8px";
                         summary.appendChild(highlightDetail);
 
+                        const highlightControls = document.createElement("div");
+                        highlightControls.style.display = "flex";
+                        highlightControls.style.gap = "8px";
+                        highlightControls.style.marginTop = "4px";
+
                         const highlightButton = document.createElement("button");
                         highlightButton.type = "button";
-                        highlightButton.disabled = true;
-                        highlightButton.textContent = "Highlight Target (TODO)";
-                        highlightButton.style.marginTop = "4px";
-                        summary.appendChild(highlightButton);
+                        const highlightButtonState = getMmeCompatHighlightButtonState(highlightAvailability);
+                        highlightButton.disabled = !highlightButtonState.enabled;
+                        highlightButton.textContent = highlightButtonState.label;
+                        highlightButton.addEventListener("click", () => {
+                            const result = fallbackController.highlightSelectedCandidate(selectedCandidateId, sceneMaterialTargets);
+                            lastHighlightActionMessage = formatMmeCompatActionResult("Highlight", result.status, result.reason, result.warnings);
+                            rerenderPanels();
+                        });
+                        highlightControls.appendChild(highlightButton);
+
+                        const clearHighlightButton = document.createElement("button");
+                        clearHighlightButton.type = "button";
+                        clearHighlightButton.disabled = !highlightState.active;
+                        clearHighlightButton.textContent = highlightState.active
+                            ? "Clear Highlight"
+                            : "Clear Highlight (inactive)";
+                        clearHighlightButton.addEventListener("click", () => {
+                            const result = fallbackController.clearHighlight();
+                            lastHighlightActionMessage = formatMmeCompatActionResult("Highlight", result.status, result.reason, result.warnings);
+                            rerenderPanels();
+                        });
+                        highlightControls.appendChild(clearHighlightButton);
+
+                        summary.appendChild(highlightControls);
+
+                        if (lastHighlightActionMessage) {
+                            appendSummaryRow(summary, "Last Highlight Result", lastHighlightActionMessage);
+                        }
                     } else {
                         const inactiveDetail = document.createElement("div");
                         inactiveDetail.style.marginTop = "8px";
@@ -583,6 +633,8 @@ export function createInternalMmeCompatManifestPlugin(
                         summary.appendChild(inactiveDetail);
                     }
                 } else {
+                    fallbackController.clearHighlight();
+                    lastHighlightActionMessage = null;
                     selectedCandidateId = null;
                     const emptyCandidates = document.createElement("div");
                     emptyCandidates.textContent = "No scene material target candidates match the current filters.";
@@ -814,6 +866,17 @@ export function getMmeCompatRevertButtonState(hasAppliedTransaction: boolean): M
     };
 }
 
+export function getMmeCompatHighlightButtonState(
+    availability: { available: boolean },
+): MmeCompatHighlightButtonState {
+    return {
+        enabled: availability.available,
+        label: availability.available
+            ? "Highlight Target (debug-only)"
+            : "Highlight Target (guarded)",
+    };
+}
+
 export function filterAndSortMmeTargetCandidates(
     candidates: readonly MmeFallbackTargetCandidate[],
     options: MmeCandidateViewOptions,
@@ -929,7 +992,7 @@ function buildApplyInputsFromTargetsAndPreviewPlan(
 }
 
 function formatMmeCompatActionResult(
-    action: "Apply" | "Revert",
+    action: "Apply" | "Revert" | "Highlight",
     status: string,
     reason: string,
     warnings: readonly string[],

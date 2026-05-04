@@ -1,5 +1,8 @@
+import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
+import { Color3 } from "@babylonjs/core/Maths/math.color";
 import type { Material } from "@babylonjs/core/Materials/material";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
+import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { Scene } from "@babylonjs/core/scene";
 
 import type { MaterialEffectTarget } from "./material-targets";
@@ -137,6 +140,35 @@ export type MmeFallbackHighlightPlan = {
     readonly warnings: readonly string[];
 };
 
+export type MmeFallbackHighlightState = {
+    readonly active: boolean;
+    readonly candidateId: string | null;
+    readonly targetId: string | null;
+    readonly meshName: string | null;
+    readonly reason: string;
+    readonly warnings: readonly string[];
+};
+
+export type MmeFallbackHighlightResult = {
+    readonly status: "highlighted" | "blocked" | "cleared";
+    readonly reason: string;
+    readonly warnings: readonly string[];
+};
+
+export type MmeFallbackHighlightAvailability = {
+    readonly available: boolean;
+    readonly reason: string;
+    readonly warnings: readonly string[];
+};
+
+type ActiveMmeFallbackHighlight = {
+    readonly candidateId: string;
+    readonly targetId: string;
+    readonly mesh: Mesh;
+    readonly scene: Scene;
+    readonly layer: HighlightLayer;
+};
+
 export class MmeFallbackController {
     private enabled = false;
     private mode: MmeFallbackControllerMode = "preview";
@@ -147,6 +179,15 @@ export class MmeFallbackController {
     private targetCandidates: MmeFallbackTargetCandidate[] = [];
     private applyPlan: MmeFallbackApplyTransaction | null = null;
     private readonly ownedFactoryResults = new Set<MmeFallbackMaterialFactoryResult>();
+    private activeHighlight: ActiveMmeFallbackHighlight | null = null;
+    private highlightState: MmeFallbackHighlightState = {
+        active: false,
+        candidateId: null,
+        targetId: null,
+        meshName: null,
+        reason: "highlight-inactive",
+        warnings: [],
+    };
 
     public getState(): MmeFallbackControllerState {
         return {
@@ -208,6 +249,7 @@ export class MmeFallbackController {
     }
 
     public clearPreview(): void {
+        this.clearHighlight();
         this.disposeOwnedFactoryResults();
         this.selectedEffectId = null;
         this.activeTargets = [];
@@ -281,6 +323,142 @@ export class MmeFallbackController {
 
     public clearTargetCandidates(): void {
         this.targetCandidates = [];
+    }
+
+    public getHighlightState(): MmeFallbackHighlightState {
+        return this.highlightState;
+    }
+
+    public getHighlightAvailability(
+        candidateId: string | null,
+        targets: readonly MaterialEffectTarget[],
+    ): MmeFallbackHighlightAvailability {
+        const candidate = candidateId
+            ? this.targetCandidates.find((entry) => entry.targetId === candidateId) ?? null
+            : null;
+        const highlightPlan = buildHighlightPlanForCandidate(candidate);
+        if (!highlightPlan.highlightable) {
+            return {
+                available: false,
+                reason: highlightPlan.reason,
+                warnings: [...highlightPlan.warnings],
+            };
+        }
+
+        const target = candidateId
+            ? targets.find((entry) => createTargetCandidateId(entry) === candidateId) ?? null
+            : null;
+        const mesh = asHighlightMesh(target?.mesh ?? null);
+        if (!mesh) {
+            return {
+                available: false,
+                reason: "mesh-unresolvable",
+                warnings: ["Target mesh could not be resolved for debug highlight."],
+            };
+        }
+
+        const scene = resolveSceneFromMesh(mesh);
+        if (!scene) {
+            return {
+                available: false,
+                reason: "scene-unavailable",
+                warnings: ["Target scene is unavailable for debug highlight."],
+            };
+        }
+
+        return {
+            available: true,
+            reason: "highlight-ready",
+            warnings: [...highlightPlan.warnings],
+        };
+    }
+
+    public highlightSelectedCandidate(
+        candidateId: string | null,
+        targets: readonly MaterialEffectTarget[],
+    ): MmeFallbackHighlightResult {
+        this.clearHighlight();
+
+        const availability = this.getHighlightAvailability(candidateId, targets);
+        if (!availability.available) {
+            this.highlightState = {
+                active: false,
+                candidateId,
+                targetId: candidateId,
+                meshName: null,
+                reason: availability.reason,
+                warnings: [...availability.warnings],
+            };
+            return {
+                status: "blocked",
+                reason: availability.reason,
+                warnings: [...availability.warnings],
+            };
+        }
+
+        const target = targets.find((entry) => createTargetCandidateId(entry) === candidateId) ?? null;
+        const mesh = asHighlightMesh(target?.mesh ?? null);
+        const scene = resolveSceneFromMesh(mesh);
+        if (!mesh || !scene || !candidateId) {
+            this.highlightState = {
+                active: false,
+                candidateId,
+                targetId: candidateId,
+                meshName: target?.meshName ?? null,
+                reason: "mesh-unresolvable",
+                warnings: ["Target mesh could not be resolved for debug highlight."],
+            };
+            return {
+                status: "blocked",
+                reason: "mesh-unresolvable",
+                warnings: ["Target mesh could not be resolved for debug highlight."],
+            };
+        }
+
+        const layer = new HighlightLayer("mme-fallback-debug-highlight", scene);
+        layer.addMesh(mesh, new Color3(0.3, 0.7, 1));
+
+        this.activeHighlight = {
+            candidateId,
+            targetId: candidateId,
+            mesh,
+            scene,
+            layer,
+        };
+        this.highlightState = {
+            active: true,
+            candidateId,
+            targetId: candidateId,
+            meshName: mesh.name ?? target?.meshName ?? null,
+            reason: "highlight-active",
+            warnings: [],
+        };
+        return {
+            status: "highlighted",
+            reason: "highlight-active",
+            warnings: [],
+        };
+    }
+
+    public clearHighlight(): MmeFallbackHighlightResult {
+        if (this.activeHighlight) {
+            this.activeHighlight.layer.removeMesh(this.activeHighlight.mesh);
+            this.activeHighlight.layer.dispose();
+            this.activeHighlight = null;
+        }
+        this.highlightState = {
+            active: false,
+            candidateId: null,
+            targetId: null,
+            meshName: null,
+            reason: "highlight-cleared",
+            warnings: [],
+        };
+        return {
+            status: "cleared",
+            reason: "highlight-cleared",
+            warnings: [],
+        };
     }
 
     public planApply(
@@ -548,6 +726,7 @@ export class MmeFallbackController {
         this.setExperimentalApplyEnabled(false);
         this.clearApplyPlan();
         this.clearTargetCandidates();
+        this.clearHighlight();
         this.disposeOwnedFactoryResults();
     }
 
@@ -755,4 +934,9 @@ function resolveSceneFromMesh(mesh: AbstractMesh | null): Scene | null {
     const getScene = (mesh as { getScene?: () => Scene }).getScene;
     if (typeof getScene !== "function") return null;
     return getScene.call(mesh);
+}
+
+function asHighlightMesh(mesh: AbstractMesh | null): Mesh | null {
+    if (!mesh || typeof mesh !== "object") return null;
+    return mesh as Mesh;
 }

@@ -7,6 +7,7 @@ import {
     getSelectedMmeTargetCandidateDetail,
     getSelectedMmeTargetCandidateHighlightDetail,
     getMmeCompatApplyStatus,
+    getMmeCompatHighlightButtonState,
     getMmeCompatRevertButtonState,
     getMmeFilePathFromPickerFile,
     registerPickedMmeFiles,
@@ -205,6 +206,20 @@ describe("InternalMmeCompatManifestPlugin", () => {
         expect(getMmeCompatRevertButtonState(true)).toEqual({
             enabled: true,
             label: "Revert Fallback",
+        });
+
+        expect(getMmeCompatHighlightButtonState({
+            available: false,
+        })).toEqual({
+            enabled: false,
+            label: "Highlight Target (guarded)",
+        });
+
+        expect(getMmeCompatHighlightButtonState({
+            available: true,
+        })).toEqual({
+            enabled: true,
+            label: "Highlight Target (debug-only)",
         });
     });
 
