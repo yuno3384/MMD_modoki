@@ -219,3 +219,76 @@ UI から controller を bypass する apply path は入れていません。
 
 現状は、MMD_modoki の既存描画系を大きく壊さずに、
 plugin 境界・MME 調査・dry-run・限定 apply 実験を reviewable に保つことを優先しています。
+
+## PR Description
+
+### Title
+
+Add plugin/effect scaffold and experimental MME compatibility pipeline
+
+### Copy-paste-ready PR description
+
+#### Summary
+
+This PR adds a read-only plugin/effect scaffold and an experimental MME compatibility pipeline to `feature/plugin-effect-api`.
+
+The goal is to create reviewable extension points and a safe investigation path for MME-style effects without claiming general MME rendering support.
+
+#### What changed
+
+- added a read-only `PluginHost` with scene lifecycle and asset hooks
+- added a minimal plugin UI registry
+- wrapped the existing luminous/glow behavior as an internal effect adapter
+- added MME file discovery and manifest loading for `.x`, `.fx`, `.fxsub`, and `.conf`
+- added a partial `.fx` structural parser and effect analyzer
+- added fallback preset planning and a fallback material factory scaffold
+- added a dry-run preview/apply controller with experimental gating
+- added a read-only candidate view with filter/sort/selection/detail/highlight-plan scaffolding
+- added guarded debug-panel Apply/Revert wiring for a very limited fallback path
+
+#### Safety boundaries
+
+- this is not full MME support
+- Ray-MMD is not supported
+- arbitrary `.fx` rendering is not supported
+- HLSL translation/execution is not implemented
+- preview remains dry-run by default
+- UI apply routes through the controller only; there is no bypass path
+- apply is limited to experimental `basicToon` only
+- apply requires:
+  - controller enabled
+  - `mode === "apply"`
+  - `experimentalApplyEnabled === true`
+  - a valid apply plan
+  - controller validation success
+- apply is blocked for:
+  - non-`basicToon` presets
+  - non-`single-global-effect` candidates
+  - duplicate mesh targets
+- apply is undoable; revert restores the original material and disposes the owned fallback material
+
+#### Current limitations
+
+- no general material replacement pipeline
+- no `textureToon`, `emissiveLite`, or `katameLike` apply path
+- no arbitrary shader execution
+- no broad renderer pipeline integration
+- no rendering parity claim with MME or Ray-MMD
+- most of the MME path is still investigation/debug scaffold rather than production behavior
+
+#### Validation
+
+- `npm.cmd run lint`
+  - passed
+  - `0 errors / 455 warnings`
+- `node_modules\.bin\tsc.cmd --noEmit`
+  - still fails due to existing repo-wide TypeScript errors outside this scaffold work
+- targeted `Vitest`
+  - could not run in this sandbox because of `spawn EPERM`
+
+#### Next steps
+
+- add a read-only apply-plan target list in the debug panel before broader apply work
+- improve target-to-effect association precision
+- decide whether `textureToon` is safe to prototype behind the same gate
+- keep Ray-MMD explicitly unsupported unless a separate design/validation track is created
