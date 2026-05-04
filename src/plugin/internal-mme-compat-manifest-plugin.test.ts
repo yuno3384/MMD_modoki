@@ -162,7 +162,7 @@ describe("InternalMmeCompatManifestPlugin", () => {
             mode: "apply",
             experimentalApplyEnabled: true,
         }, {
-            enabled: false,
+            available: false,
             reason: "apply-plan-missing",
             warnings: ["Fallback apply requires an explicit apply plan"],
         })).toBe("apply-plan-missing");
@@ -172,7 +172,7 @@ describe("InternalMmeCompatManifestPlugin", () => {
             mode: "apply",
             experimentalApplyEnabled: true,
         }, {
-            enabled: true,
+            available: true,
             reason: "apply-ready",
             warnings: [],
         })).toBe("ready (experimental basicToon apply)");
@@ -180,7 +180,7 @@ describe("InternalMmeCompatManifestPlugin", () => {
 
     it("enables apply/revert button labels only through guarded pure helper state", () => {
         expect(getMmeCompatApplyButtonState({
-            enabled: false,
+            available: false,
             reason: "experimental-apply-disabled",
             warnings: ["Experimental fallback apply opt-in is disabled"],
         })).toEqual({
@@ -189,7 +189,7 @@ describe("InternalMmeCompatManifestPlugin", () => {
         });
 
         expect(getMmeCompatApplyButtonState({
-            enabled: true,
+            available: true,
             reason: "apply-ready",
             warnings: [],
         })).toEqual({

@@ -788,7 +788,7 @@ export function getMmeCompatApplyStatus(
     if (!availability) {
         return "experimental-apply-pending";
     }
-    if (!availability.enabled) {
+    if (!availability.available) {
         return availability.reason;
     }
     return "ready (experimental basicToon apply)";
@@ -798,8 +798,8 @@ export function getMmeCompatApplyButtonState(
     availability: MmeFallbackApplyAvailability,
 ): MmeCompatApplyButtonState {
     return {
-        enabled: availability.enabled,
-        label: availability.enabled
+        enabled: availability.available,
+        label: availability.available
             ? "Apply Fallback (experimental basicToon)"
             : "Apply Fallback (guarded)",
     };
