@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+    buildMmeCompatApplyPlanRows,
     buildMmeTexturePreviewSummaryEntries,
     createInternalMmeCompatManifestPlugin,
     filterAndSortMmeTargetCandidates,
@@ -76,6 +77,100 @@ describe("InternalMmeCompatManifestPlugin", () => {
             { label: "Sphere", status: "candidate-only", reference: "env/matcap.sph", resolvedPath: null },
         ]);
         expect(mappedFields).toEqual(snapshot);
+    });
+
+    it("builds apply-plan rows with expected target info and original material availability", () => {
+        const rows = buildMmeCompatApplyPlanRows({
+            transactionId: "tx-1",
+            createdAt: "2026-05-05T00:00:00.000Z",
+            status: "planned",
+            targetRecords: [
+                {
+                    effectId: "bundle/main.fx",
+                    targetName: "Miku",
+                    meshName: "BodyMesh",
+                    materialName: "BodyMaterial",
+                    sourcePath: "model.pmx",
+                    mesh: null,
+                    scene: null,
+                    matchingPolicy: "single-global-effect",
+                    originalMaterial: null,
+                    originalMaterialAvailable: false,
+                    createdFallbackMaterial: null,
+                    plannedFallback: {
+                        effectId: "bundle/main.fx",
+                        targetName: "Miku",
+                        meshName: "BodyMesh",
+                        materialName: "BodyMaterial",
+                        sourcePath: "model.pmx",
+                        analysisStatus: "partiallyMapped",
+                        analysisConfidence: 0.8,
+                        fallbackConfidence: 0.64,
+                        preset: "basicToon",
+                        fallbackReasons: [],
+                        mappedFields: {},
+                        blockedByUnsupportedFeatures: [],
+                        factoryStatus: "created",
+                        warnings: [],
+                        analysis: {
+                            status: "partiallyMapped",
+                            confidence: 0.8,
+                            reason: "test-analysis",
+                            mappedFields: {
+                                diffuseColor: null,
+                                diffuseTexture: null,
+                                alpha: null,
+                                specularColor: null,
+                                specularIntensity: null,
+                                emissiveColor: null,
+                                emissiveTexture: null,
+                                normalMap: null,
+                                toonRamp: null,
+                                sphereMap: null,
+                            },
+                            unsupportedFeatures: [],
+                            warnings: [],
+                        },
+                        fallbackPlan: {
+                            preset: "basicToon",
+                            confidence: 0.64,
+                            reasons: [],
+                            requiredFields: [],
+                            optionalFields: [],
+                            missingFields: [],
+                            blockedByUnsupportedFeatures: [],
+                            warnings: [],
+                        },
+                    },
+                    plannedFallbackOwnership: "none",
+                },
+            ],
+        }, {
+            available: false,
+            reason: "scene-unavailable",
+            warnings: [],
+        });
+
+        expect(rows).toEqual([
+            {
+                targetId: "bundle/main.fx",
+                ownerName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                originalMaterialAvailability: "unavailable",
+                plannedFallbackPreset: "basicToon",
+                matchingPolicy: "single-global-effect",
+                validationReason: "scene-unavailable",
+            },
+        ]);
+    });
+
+    it("returns no apply-plan rows when no plan exists", () => {
+        expect(buildMmeCompatApplyPlanRows(null, {
+            available: false,
+            reason: "apply-plan-missing",
+            warnings: [],
+        })).toEqual([]);
     });
 
     it("filters candidates by kind, preset, and status without mutating the source array", () => {

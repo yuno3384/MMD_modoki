@@ -3,6 +3,7 @@ import { pluginUiRegistry } from "./ui-registry";
 import {
     buildHighlightPlanForCandidate,
     MmeFallbackController,
+    type MmeFallbackApplyTransaction,
     type MmeFallbackApplyAvailability,
     type MmeFallbackControllerState,
     type MmeFallbackHighlightPlan,
@@ -71,6 +72,17 @@ export type MmeCompatRevertButtonState = {
 export type MmeCompatHighlightButtonState = {
     readonly enabled: boolean;
     readonly label: string;
+};
+
+export type MmeCompatApplyPlanRow = {
+    readonly targetId: string;
+    readonly ownerName: string | null;
+    readonly meshName: string | null;
+    readonly materialName: string | null;
+    readonly originalMaterialAvailability: "available" | "unavailable";
+    readonly plannedFallbackPreset: string;
+    readonly matchingPolicy: string | null;
+    readonly validationReason: string | null;
 };
 
 export type InternalMmeCompatManifestPlugin = ScenePlugin & {
@@ -352,6 +364,16 @@ export function createInternalMmeCompatManifestPlugin(
                 summary.appendChild(candidateNotice);
 
                 appendSummaryRow(summary, "Apply Plan Targets", String(applyPlan?.targetRecords.length ?? 0));
+
+                const applyPlanNotice = document.createElement("div");
+                applyPlanNotice.style.marginTop = "8px";
+                applyPlanNotice.style.fontSize = "12px";
+                applyPlanNotice.style.opacity = "0.75";
+                applyPlanNotice.textContent = "Apply Plan Targets. Read-only pre-apply preview, experimental, and basicToon-only.";
+                summary.appendChild(applyPlanNotice);
+
+                const applyPlanRows = buildMmeCompatApplyPlanRows(applyPlan, applyAvailability);
+                summary.appendChild(createMmeCompatApplyPlanView(applyPlanRows, applyAvailability));
 
                 const applyControlNotice = document.createElement("div");
                 applyControlNotice.style.marginTop = "8px";
@@ -887,6 +909,27 @@ export function getMmeCompatHighlightButtonState(
     };
 }
 
+export function buildMmeCompatApplyPlanRows(
+    applyPlan: MmeFallbackApplyTransaction | null,
+    availability: MmeFallbackApplyAvailability,
+): readonly MmeCompatApplyPlanRow[] {
+    if (!applyPlan) {
+        return [];
+    }
+
+    const validationReason = availability.available ? null : availability.reason;
+    return applyPlan.targetRecords.map((record) => ({
+        targetId: record.effectId,
+        ownerName: record.targetName,
+        meshName: record.meshName,
+        materialName: record.materialName,
+        originalMaterialAvailability: record.originalMaterialAvailable ? "available" : "unavailable",
+        plannedFallbackPreset: record.plannedFallback.preset,
+        matchingPolicy: record.matchingPolicy,
+        validationReason,
+    }));
+}
+
 export function filterAndSortMmeTargetCandidates(
     candidates: readonly MmeFallbackTargetCandidate[],
     options: MmeCandidateViewOptions,
@@ -1113,6 +1156,60 @@ function createMmeTexturePreviewSummaryCards(
         }
 
         wrapper.appendChild(effectCard);
+    }
+
+    return wrapper;
+}
+
+function createMmeCompatApplyPlanView(
+    rows: readonly MmeCompatApplyPlanRow[],
+    availability: MmeFallbackApplyAvailability,
+): HTMLElement {
+    const wrapper = document.createElement("div");
+    wrapper.style.display = "grid";
+    wrapper.style.gap = "8px";
+    wrapper.style.marginTop = "8px";
+
+    if (rows.length === 0) {
+        const empty = document.createElement("div");
+        empty.style.padding = "8px";
+        empty.style.background = "rgba(15, 23, 42, 0.18)";
+        empty.style.border = "1px solid rgba(148, 163, 184, 0.2)";
+        empty.style.borderRadius = "8px";
+        empty.textContent = `No apply plan. Availability: ${availability.reason}`;
+        wrapper.appendChild(empty);
+        return wrapper;
+    }
+
+    for (const row of rows) {
+        const card = document.createElement("div");
+        card.style.display = "grid";
+        card.style.gap = "4px";
+        card.style.padding = "8px";
+        card.style.background = "rgba(15, 23, 42, 0.18)";
+        card.style.border = "1px solid rgba(148, 163, 184, 0.2)";
+        card.style.borderRadius = "8px";
+
+        const title = document.createElement("div");
+        title.textContent = `${row.ownerName ?? "(unknown owner)"} | ${row.meshName ?? "(unknown mesh)"} | ${row.materialName ?? "(unknown material)"}`;
+        title.style.fontWeight = "600";
+        card.appendChild(title);
+
+        for (const line of [
+            `target: ${row.targetId}`,
+            `original material: ${row.originalMaterialAvailability}`,
+            `preset: ${row.plannedFallbackPreset}`,
+            `matching: ${row.matchingPolicy ?? "(unknown)"}`,
+            `validation: ${row.validationReason ?? "ready"}`,
+        ]) {
+            const detail = document.createElement("div");
+            detail.textContent = line;
+            detail.style.fontSize = "12px";
+            detail.style.opacity = "0.78";
+            card.appendChild(detail);
+        }
+
+        wrapper.appendChild(card);
     }
 
     return wrapper;
