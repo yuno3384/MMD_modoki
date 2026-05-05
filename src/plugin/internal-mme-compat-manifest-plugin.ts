@@ -319,19 +319,7 @@ export function createInternalMmeCompatManifestPlugin(
                 texturePreviewLabel.style.opacity = "0.75";
                 texturePreviewLabel.textContent = "Texture Preview Summary. Read-only dry-run diagnostics for parsed effect candidates.";
                 summary.appendChild(texturePreviewLabel);
-
-                const texturePreviewSummary = document.createElement("pre");
-                texturePreviewSummary.textContent = previewPlan
-                    .map((entry) => formatMmeTexturePreviewSummary(entry.effectId, entry.mappedFields))
-                    .join("\n\n");
-                texturePreviewSummary.style.margin = "8px 0 0";
-                texturePreviewSummary.style.padding = "8px";
-                texturePreviewSummary.style.maxHeight = "180px";
-                texturePreviewSummary.style.overflow = "auto";
-                texturePreviewSummary.style.whiteSpace = "pre-wrap";
-                texturePreviewSummary.style.background = "rgba(15, 23, 42, 0.18)";
-                texturePreviewSummary.style.borderRadius = "8px";
-                summary.appendChild(texturePreviewSummary);
+                summary.appendChild(createMmeTexturePreviewSummaryCards(previewPlan));
 
                 const parsedSummary = document.createElement("pre");
                 parsedSummary.textContent = JSON.stringify(previewPlan.map((entry) => ({
@@ -1096,6 +1084,40 @@ export function formatMmeTexturePreviewSummary(
     return lines.join("\n");
 }
 
+function createMmeTexturePreviewSummaryCards(
+    previewPlan: readonly MmeFallbackPreviewPlanItem[],
+): HTMLElement {
+    const wrapper = document.createElement("div");
+    wrapper.style.display = "grid";
+    wrapper.style.gap = "8px";
+    wrapper.style.marginTop = "8px";
+    wrapper.style.maxHeight = "220px";
+    wrapper.style.overflow = "auto";
+
+    for (const entry of previewPlan) {
+        const effectCard = document.createElement("div");
+        effectCard.style.display = "grid";
+        effectCard.style.gap = "6px";
+        effectCard.style.padding = "8px";
+        effectCard.style.background = "rgba(15, 23, 42, 0.18)";
+        effectCard.style.border = "1px solid rgba(148, 163, 184, 0.2)";
+        effectCard.style.borderRadius = "8px";
+
+        const effectTitle = document.createElement("div");
+        effectTitle.textContent = `Effect: ${entry.effectId}`;
+        effectTitle.style.fontWeight = "600";
+        effectCard.appendChild(effectTitle);
+
+        for (const textureEntry of buildMmeTexturePreviewSummaryEntries(entry.mappedFields)) {
+            effectCard.appendChild(createMmeTexturePreviewSummaryRow(textureEntry));
+        }
+
+        wrapper.appendChild(effectCard);
+    }
+
+    return wrapper;
+}
+
 function buildMmeTexturePreviewSummaryEntry(
     label: MmeTexturePreviewSummaryEntry["label"],
     candidate: ReturnType<typeof summarizeMappedTextureCandidates>[number] | undefined,
@@ -1119,6 +1141,56 @@ function buildMmeTexturePreviewSummaryEntry(
         reference: candidate.reference,
         resolvedPath: candidate.resolvedPath,
     };
+}
+
+function createMmeTexturePreviewSummaryRow(entry: MmeTexturePreviewSummaryEntry): HTMLElement {
+    const row = document.createElement("div");
+    row.style.display = "grid";
+    row.style.gap = "2px";
+    row.style.padding = "6px 8px";
+    row.style.background = "rgba(15, 23, 42, 0.14)";
+    row.style.borderRadius = "6px";
+
+    const header = document.createElement("div");
+    header.style.display = "flex";
+    header.style.justifyContent = "space-between";
+    header.style.gap = "8px";
+
+    const label = document.createElement("span");
+    label.textContent = entry.label;
+    label.style.fontWeight = "600";
+
+    const status = document.createElement("span");
+    status.textContent = entry.status;
+    status.style.opacity = "0.8";
+
+    header.appendChild(label);
+    header.appendChild(status);
+    row.appendChild(header);
+
+    if (entry.reference) {
+        const reference = document.createElement("div");
+        reference.textContent = `ref: ${entry.reference}`;
+        reference.style.fontSize = "12px";
+        reference.style.opacity = "0.78";
+        row.appendChild(reference);
+    }
+
+    if (entry.resolvedPath) {
+        const path = document.createElement("div");
+        path.textContent = `path: ${entry.resolvedPath}`;
+        path.style.fontSize = "12px";
+        path.style.opacity = "0.78";
+        row.appendChild(path);
+    } else if (entry.status !== "none") {
+        const unresolved = document.createElement("div");
+        unresolved.textContent = "path: (unresolved)";
+        unresolved.style.fontSize = "12px";
+        unresolved.style.opacity = "0.78";
+        row.appendChild(unresolved);
+    }
+
+    return row;
 }
 
 function formatMmeTexturePreviewSummaryEntry(entry: MmeTexturePreviewSummaryEntry): string {
