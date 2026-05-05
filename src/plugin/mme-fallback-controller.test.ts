@@ -286,6 +286,52 @@ technique Post {
         });
     });
 
+    it("keeps textureToon preview plans ineligible for apply availability", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial("original_texture");
+        const mesh = createMockMesh("BodyMesh", originalMaterial, scene);
+
+        controller.setEnabled(true);
+        controller.setMode("apply");
+        controller.setExperimentalApplyEnabled(true);
+        controller.planApply([
+            {
+                effectId: "texture",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseMmeEffectFile({
+                    path: "texture.fx",
+                    kind: "fx",
+                    text: `
+texture MainTex;
+sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
+`,
+                }),
+            },
+        ], {
+            manifest: {
+                textureCandidates: [
+                    {
+                        sourceFile: "texture.fx",
+                        reference: "textures/main_diffuse.png",
+                        resolvedPath: "bundle/textures/main_diffuse.png",
+                    },
+                ],
+            },
+        });
+
+        expect(controller.getApplyAvailability()).toMatchObject({
+            available: false,
+            reason: "apply-targets-invalid",
+        });
+    });
+
     it("keeps experimental apply disabled by default and reports gate status", () => {
         const controller = new MmeFallbackController();
 

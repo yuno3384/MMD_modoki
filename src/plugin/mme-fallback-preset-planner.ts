@@ -29,6 +29,7 @@ export function planMmeFallbackPreset(
     void context;
     const warnings = [...analysis.warnings];
     const blockedByUnsupportedFeatures = [...analysis.unsupportedFeatures];
+    let textureToonRejectedForWeakEvidence = false;
 
     if (analysis.status === "failed" || analysis.status === "unsupported") {
         return {
@@ -66,11 +67,13 @@ export function planMmeFallbackPreset(
     const hasDiffuseColor = fields.diffuseColor !== null;
     const hasDiffuseTexture = fields.diffuseTexture !== null;
     const hasToonRamp = fields.toonRamp !== null;
-    const hasSphereMap = fields.sphereMap !== null;
     const hasSpecular = fields.specularColor !== null || fields.specularIntensity !== null;
     const hasEmissive = fields.emissiveColor !== null || fields.emissiveTexture !== null;
     const hasResolvedDiffuseTexture = fields.diffuseTexture?.resolvedPath !== null;
     const hasResolvedToonRamp = fields.toonRamp?.resolvedPath !== null;
+    const hasResolvedSphereMap = fields.sphereMap?.resolvedPath !== null;
+    const hasStrongTextureToonEvidence = hasResolvedDiffuseTexture || hasResolvedToonRamp;
+    const hasStrongKatameEvidence = hasResolvedToonRamp || hasResolvedSphereMap || hasSpecular;
 
     if (hasEmissive && !isRenderTargetHeavy(effect)) {
         return {
@@ -88,15 +91,15 @@ export function planMmeFallbackPreset(
         };
     }
 
-    if ((hasToonRamp || hasSphereMap || hasSpecular) && !isShaderDependent(effect)) {
+    if (hasStrongKatameEvidence && !isShaderDependent(effect)) {
         const missingFields = [];
-        if (!hasToonRamp && !hasSphereMap) {
+        if (!hasResolvedToonRamp && !hasResolvedSphereMap) {
             missingFields.push("toonRamp or sphereMap");
         }
 
         return {
             preset: "katameLike",
-            confidence: hasToonRamp || hasSphereMap ? 0.78 : 0.62,
+            confidence: hasResolvedToonRamp || hasResolvedSphereMap ? 0.78 : 0.62,
             reasons: [
                 "Toon ramp, sphere/matcap, or strong specular-like fields were detected",
                 "No custom shader dependency or complex render target flow was detected",
@@ -120,21 +123,25 @@ export function planMmeFallbackPreset(
             warnings.push("Toon ramp candidate is preview-only and not resolved confidently");
         }
 
-        return {
-            preset: "textureToon",
-            confidence: hasResolvedDiffuseTexture || hasResolvedToonRamp
-                ? (hasResolvedDiffuseTexture && hasResolvedToonRamp ? 0.8 : 0.68)
-                : 0.56,
-            reasons: [
-                "Diffuse texture or toon ramp candidate was detected",
-                "No serious unsupported features were detected",
-            ],
-            requiredFields: ["diffuseTexture or toonRamp"],
-            optionalFields: ["diffuseColor", "alpha", "sphereMap"],
-            missingFields,
-            blockedByUnsupportedFeatures,
-            warnings,
-        };
+        if (hasStrongTextureToonEvidence) {
+            return {
+                preset: "textureToon",
+                confidence: hasResolvedDiffuseTexture && hasResolvedToonRamp ? 0.8 : 0.68,
+                reasons: [
+                    "Diffuse texture or toon ramp candidate was detected",
+                    "At least one useful texture candidate resolved safely",
+                    "No serious unsupported features were detected",
+                ],
+                requiredFields: ["diffuseTexture or toonRamp"],
+                optionalFields: ["diffuseColor", "alpha", "sphereMap"],
+                missingFields,
+                blockedByUnsupportedFeatures,
+                warnings,
+            };
+        }
+
+        warnings.push("Texture-only evidence remained weak or unresolved, so textureToon was not recommended conservatively");
+        textureToonRejectedForWeakEvidence = true;
     }
 
     if (hasDiffuseColor && blockedByUnsupportedFeatures.length === 0) {
@@ -156,9 +163,14 @@ export function planMmeFallbackPreset(
     return {
         preset: "none",
         confidence: 0.2,
-        reasons: [
-            "Effect was parsed, but no safe toon/Katame fallback preset could be selected conservatively",
-        ],
+        reasons: textureToonRejectedForWeakEvidence
+            ? [
+                "Texture-like evidence was detected, but it remained preview-only or unresolved",
+                "textureToon was not recommended because no useful texture candidate resolved safely",
+            ]
+            : [
+                "Effect was parsed, but no safe toon/Katame fallback preset could be selected conservatively",
+            ],
         requiredFields: [],
         optionalFields: [],
         missingFields: [],

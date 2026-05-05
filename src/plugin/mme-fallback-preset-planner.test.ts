@@ -66,8 +66,36 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
         });
         const plan = planMmeFallbackPreset(analysis, effect);
 
-        expect(plan.preset).toBe("textureToon");
+        expect(plan.preset).toBe("none");
         expect(plan.warnings.some((warning) => warning.includes("preview-only"))).toBe(true);
+        expect(plan.reasons.some((reason) => reason.includes("no useful texture candidate resolved safely"))).toBe(true);
+    });
+
+    it("keeps unresolved toon ramp-only evidence conservative with warnings", () => {
+        const effect = parseMmeEffectFile({
+            path: "toon-ramp-weak.fx",
+            kind: "fx",
+            text: `
+texture ToonRamp;
+sampler2D ToonSampler = sampler_state { Texture = <ToonRamp>; };
+`,
+        });
+
+        const analysis = analyzeMmeEffectIR(effect, {
+            manifest: {
+                textureCandidates: [
+                    {
+                        sourceFile: "toon-ramp-weak.fx",
+                        reference: "textures/unknown_asset.png",
+                        resolvedPath: "bundle/textures/unknown_asset.png",
+                    },
+                ],
+            },
+        });
+        const plan = planMmeFallbackPreset(analysis, effect);
+
+        expect(plan.preset).toBe("none");
+        expect(plan.warnings.some((warning) => warning.includes("Toon ramp candidate is preview-only"))).toBe(true);
     });
 
     it("plans katameLike for sphere/specular-heavy effects", () => {
