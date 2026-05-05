@@ -36,11 +36,92 @@ sampler2D SphereSampler = sampler_state { Texture = <SphereTex>; };
 `,
         });
 
-        const analysis = analyzeMmeEffectIR(effect);
+        const analysis = analyzeMmeEffectIR(effect, {
+            manifest: {
+                textureCandidates: [
+                    {
+                        sourceFile: "tex.fx",
+                        reference: "textures/main_diffuse.png",
+                        resolvedPath: "bundle/textures/main_diffuse.png",
+                    },
+                    {
+                        sourceFile: "tex.fx",
+                        reference: "env/matcap.sph",
+                        resolvedPath: "bundle/env/matcap.sph",
+                    },
+                ],
+            },
+        });
 
         expect(analysis.status).toBe("partiallyMapped");
         expect(analysis.mappedFields.diffuseTexture?.name).toBe("MainTex");
+        expect(analysis.mappedFields.diffuseTexture?.reference).toBe("textures/main_diffuse.png");
+        expect(analysis.mappedFields.diffuseTexture?.resolvedPath).toBe("bundle/textures/main_diffuse.png");
+        expect(analysis.mappedFields.diffuseTexture?.status).toBe("resolved");
         expect(analysis.mappedFields.sphereMap?.name).toBe("SphereTex");
+        expect(analysis.mappedFields.sphereMap?.reference).toBe("env/matcap.sph");
+        expect(analysis.mappedFields.sphereMap?.status).toBe("resolved");
+    });
+
+    it("exposes toon ramp candidates in preview analysis", () => {
+        const effect = parseMmeEffectFile({
+            path: "toon.fx",
+            kind: "fx",
+            text: `
+texture ToonRamp;
+sampler2D ToonSampler = sampler_state { Texture = <ToonRamp>; };
+`,
+        });
+
+        const analysis = analyzeMmeEffectIR(effect, {
+            manifest: {
+                textureCandidates: [
+                    {
+                        sourceFile: "toon.fx",
+                        reference: "toon/toon02.bmp",
+                        resolvedPath: "bundle/toon/toon02.bmp",
+                    },
+                ],
+            },
+        });
+
+        expect(analysis.mappedFields.toonRamp).toMatchObject({
+            name: "ToonRamp",
+            reference: "toon/toon02.bmp",
+            resolvedPath: "bundle/toon/toon02.bmp",
+            status: "resolved",
+        });
+    });
+
+    it("keeps unresolved texture candidates nullable-safe with warnings", () => {
+        const effect = parseMmeEffectFile({
+            path: "weak.fx",
+            kind: "fx",
+            text: `
+texture MainTex;
+sampler2D DiffuseSampler = sampler_state { Texture = <MainTex>; };
+`,
+        });
+
+        const analysis = analyzeMmeEffectIR(effect, {
+            manifest: {
+                textureCandidates: [
+                    {
+                        sourceFile: "weak.fx",
+                        reference: "textures/unknown_asset.png",
+                        resolvedPath: "bundle/textures/unknown_asset.png",
+                    },
+                ],
+            },
+        });
+
+        expect(analysis.mappedFields.diffuseTexture).toMatchObject({
+            name: "MainTex",
+            reference: "textures/unknown_asset.png",
+            resolvedPath: null,
+            status: "candidate-only",
+        });
+        expect(analysis.warnings.some((warning) => warning.includes("diffuseTexture remains preview-only"))).toBe(true);
     });
 
     it("classifies multipass or postprocess-like effects as unsupported", () => {

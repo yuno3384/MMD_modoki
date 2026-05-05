@@ -69,6 +69,8 @@ export function planMmeFallbackPreset(
     const hasSphereMap = fields.sphereMap !== null;
     const hasSpecular = fields.specularColor !== null || fields.specularIntensity !== null;
     const hasEmissive = fields.emissiveColor !== null || fields.emissiveTexture !== null;
+    const hasResolvedDiffuseTexture = fields.diffuseTexture?.resolvedPath !== null;
+    const hasResolvedToonRamp = fields.toonRamp?.resolvedPath !== null;
 
     if (hasEmissive && !isRenderTargetHeavy(effect)) {
         return {
@@ -111,10 +113,18 @@ export function planMmeFallbackPreset(
         const missingFields = [];
         if (!hasDiffuseTexture) missingFields.push("diffuseTexture");
         if (!hasToonRamp) missingFields.push("toonRamp");
+        if (hasDiffuseTexture && !hasResolvedDiffuseTexture) {
+            warnings.push("Diffuse texture candidate is preview-only and not resolved confidently");
+        }
+        if (hasToonRamp && !hasResolvedToonRamp) {
+            warnings.push("Toon ramp candidate is preview-only and not resolved confidently");
+        }
 
         return {
             preset: "textureToon",
-            confidence: hasDiffuseTexture && hasToonRamp ? 0.8 : 0.68,
+            confidence: hasResolvedDiffuseTexture || hasResolvedToonRamp
+                ? (hasResolvedDiffuseTexture && hasResolvedToonRamp ? 0.8 : 0.68)
+                : 0.56,
             reasons: [
                 "Diffuse texture or toon ramp candidate was detected",
                 "No serious unsupported features were detected",

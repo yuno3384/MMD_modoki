@@ -5,7 +5,9 @@ export type MmeEffectSupportStatus = "parsed" | "partiallyMapped" | "unsupported
 
 export type MmeMappedTextureField = {
     readonly name: string;
+    readonly reference: string | null;
     readonly resolvedPath: string | null;
+    readonly status: "resolved" | "candidate-only" | "unresolved";
 };
 
 export type MmeMappedColorField = {
@@ -89,7 +91,9 @@ export function analyzeMmeEffectIR(
         warnings.push(`Unknown semantics detected: ${unknownSemantics.join(", ")}`);
     }
 
-    const mappedFields = mapMaterialFields(effect, context);
+    const mappedFieldResult = mapMaterialFields(effect, context);
+    const mappedFields = mappedFieldResult.fields;
+    warnings.push(...mappedFieldResult.warnings);
     const mappedFieldCount = countMappedFields(mappedFields);
 
     if (unsupportedFeatures.length > 0) {
@@ -152,24 +156,28 @@ function isEffectIrEmpty(effect: MMEEffectIR): boolean {
 function mapMaterialFields(
     effect: MMEEffectIR,
     context?: { manifest?: Pick<MMEManifest, "textureCandidates"> },
-): MmeMappedMaterialFields {
+): { fields: MmeMappedMaterialFields; warnings: readonly string[] } {
     const diffuseColor = findColorParameter(effect.parameters, ["diffuse", "albedo", "color", "basecolor"], ["DIFFUSE", "COLOR"]);
     const alpha = findScalarParameter(effect.parameters, ["alpha", "opacity", "transparency"], ["ALPHA"]);
     const specularColor = findColorParameter(effect.parameters, ["specular", "specularcolor"], ["SPECULAR"]);
     const specularIntensity = findScalarParameter(effect.parameters, ["specularpower", "shininess", "power", "specularintensity"], []);
     const emissiveColor = findColorParameter(effect.parameters, ["emissive", "emission", "selfillum", "glow"], ["EMISSIVE"]);
+    const warnings: string[] = [];
 
     return {
+        warnings,
+        fields: {
         diffuseColor,
-        diffuseTexture: findTextureField(effect, context, ["diffuse", "albedo", "main", "base", "tex"], ["DIFFUSE", "COLOR"]),
+        diffuseTexture: findTextureField(effect, context, warnings, "diffuseTexture", ["diffuse", "albedo", "main", "base", "tex"], ["DIFFUSE", "COLOR"]),
         alpha,
         specularColor,
         specularIntensity,
         emissiveColor,
-        emissiveTexture: findTextureField(effect, context, ["emissive", "emission", "glow", "luminous"], ["EMISSIVE"]),
-        normalMap: findTextureField(effect, context, ["normal", "nrm", "bump"], ["NORMAL"]),
-        toonRamp: findTextureField(effect, context, ["toon", "ramp"], ["TOON"]),
-        sphereMap: findTextureField(effect, context, ["sphere", "sph", "spa", "matcap", "env"], ["SPHERE", "MATCAP"]),
+        emissiveTexture: findTextureField(effect, context, warnings, "emissiveTexture", ["emissive", "emission", "glow", "luminous"], ["EMISSIVE"]),
+        normalMap: findTextureField(effect, context, warnings, "normalMap", ["normal", "nrm", "bump"], ["NORMAL"]),
+        toonRamp: findTextureField(effect, context, warnings, "toonRamp", ["toon", "ramp"], ["TOON"]),
+        sphereMap: findTextureField(effect, context, warnings, "sphereMap", ["sphere", "sph", "spa", "matcap", "env"], ["SPHERE", "MATCAP"]),
+        },
     };
 }
 
@@ -230,6 +238,8 @@ function findBestParameter(
 function findTextureField(
     effect: MMEEffectIR,
     context: { manifest?: Pick<MMEManifest, "textureCandidates"> } | undefined,
+    warnings: string[],
+    fieldKind: "diffuseTexture" | "emissiveTexture" | "normalMap" | "toonRamp" | "sphereMap",
     nameHints: readonly string[],
     semanticHints: readonly string[],
 ): MmeMappedTextureField | null {
@@ -265,9 +275,16 @@ function findTextureField(
     }
     if (!bestTexture) return null;
 
+    const candidate = resolveTextureCandidate(effect.path, bestTexture, context?.manifest, normalizedNameHints, normalizedSemanticHints);
+    if (candidate.status !== "resolved") {
+        warnings.push(`${fieldKind} remains preview-only: ${candidate.warning}`);
+    }
+
     return {
         name: bestTexture.name,
-        resolvedPath: resolveTextureCandidatePath(effect.path, bestTexture.name, context?.manifest),
+        reference: candidate.reference,
+        resolvedPath: candidate.resolvedPath,
+        status: candidate.status,
     };
 }
 
@@ -284,20 +301,83 @@ function scoreTexture(
     return score;
 }
 
-function resolveTextureCandidatePath(
+function resolveTextureCandidate(
     sourceFile: string,
-    textureName: string,
+    texture: MMEEffectTexture,
     manifest: Pick<MMEManifest, "textureCandidates"> | undefined,
-): string | null {
-    if (!manifest) return null;
-    const normalizedTextureName = textureName.toLowerCase();
-    const candidate = manifest.textureCandidates.find((entry) => {
-        if (entry.sourceFile !== sourceFile) return false;
-        const reference = entry.reference.toLowerCase();
-        const resolved = entry.resolvedPath?.toLowerCase() ?? "";
-        return reference.includes(normalizedTextureName) || resolved.includes(normalizedTextureName);
-    });
-    return candidate?.resolvedPath ?? null;
+    normalizedNameHints: readonly string[],
+    normalizedSemanticHints: readonly string[],
+): { reference: string | null; resolvedPath: string | null; status: MmeMappedTextureField["status"]; warning: string } {
+    if (!manifest) {
+        return {
+            reference: null,
+            resolvedPath: null,
+            status: "unresolved",
+            warning: `no manifest texture candidates were available for ${texture.name}`,
+        };
+    }
+
+    const candidates = manifest.textureCandidates.filter((entry) => entry.sourceFile === sourceFile);
+    if (candidates.length === 0) {
+        return {
+            reference: null,
+            resolvedPath: null,
+            status: "unresolved",
+            warning: `no manifest texture candidates matched ${texture.name}`,
+        };
+    }
+
+    const normalizedTextureName = texture.name.toLowerCase();
+    const normalizedTextureSemantic = texture.semantic?.toUpperCase() ?? "";
+    const scoredCandidates = candidates
+        .map((entry) => ({
+            entry,
+            score: scoreTextureCandidate(entry.reference, normalizedTextureName, normalizedTextureSemantic, normalizedNameHints, normalizedSemanticHints),
+        }))
+        .sort((left, right) => right.score - left.score);
+
+    const bestCandidate = scoredCandidates[0];
+    if (!bestCandidate) {
+        return {
+            reference: null,
+            resolvedPath: null,
+            status: "unresolved",
+            warning: `no scored texture candidate was found for ${texture.name}`,
+        };
+    }
+
+    if (bestCandidate.score >= 4) {
+        return {
+            reference: bestCandidate.entry.reference,
+            resolvedPath: bestCandidate.entry.resolvedPath,
+            status: bestCandidate.entry.resolvedPath ? "resolved" : "candidate-only",
+            warning: bestCandidate.entry.resolvedPath
+                ? `${texture.name} resolved to ${bestCandidate.entry.reference}`
+                : `${texture.name} matched ${bestCandidate.entry.reference}, but the path could not be resolved safely`,
+        };
+    }
+
+    return {
+        reference: bestCandidate.entry.reference,
+        resolvedPath: null,
+        status: "candidate-only",
+        warning: `${texture.name} has only a weak or ambiguous texture candidate (${bestCandidate.entry.reference})`,
+    };
+}
+
+function scoreTextureCandidate(
+    reference: string,
+    normalizedTextureName: string,
+    normalizedTextureSemantic: string,
+    normalizedNameHints: readonly string[],
+    normalizedSemanticHints: readonly string[],
+): number {
+    const normalizedReference = reference.toLowerCase();
+    let score = 0;
+    if (normalizedReference.includes(normalizedTextureName)) score += 4;
+    if (normalizedNameHints.some((hint) => normalizedReference.includes(hint))) score += 2;
+    if (normalizedSemanticHints.some((hint) => normalizedTextureSemantic.includes(hint))) score += 1;
+    return score;
 }
 
 function collectUnknownSemantics(effect: MMEEffectIR): readonly string[] {

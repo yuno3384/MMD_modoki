@@ -28,9 +28,46 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
 `,
         });
 
-        const plan = planMmeFallbackPreset(analyzeMmeEffectIR(effect), effect);
+        const plan = planMmeFallbackPreset(analyzeMmeEffectIR(effect, {
+            manifest: {
+                textureCandidates: [
+                    {
+                        sourceFile: "texture.fx",
+                        reference: "toon/toon01.bmp",
+                        resolvedPath: "bundle/toon/toon01.bmp",
+                    },
+                ],
+            },
+        }), effect);
 
         expect(plan.preset).toBe("textureToon");
+    });
+
+    it("keeps unresolved textureToon preview candidates preview-only with warnings", () => {
+        const effect = parseMmeEffectFile({
+            path: "texture-weak.fx",
+            kind: "fx",
+            text: `
+texture MainTex;
+sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
+`,
+        });
+
+        const analysis = analyzeMmeEffectIR(effect, {
+            manifest: {
+                textureCandidates: [
+                    {
+                        sourceFile: "texture-weak.fx",
+                        reference: "textures/unknown_asset.png",
+                        resolvedPath: "bundle/textures/unknown_asset.png",
+                    },
+                ],
+            },
+        });
+        const plan = planMmeFallbackPreset(analysis, effect);
+
+        expect(plan.preset).toBe("textureToon");
+        expect(plan.warnings.some((warning) => warning.includes("preview-only"))).toBe(true);
     });
 
     it("plans katameLike for sphere/specular-heavy effects", () => {

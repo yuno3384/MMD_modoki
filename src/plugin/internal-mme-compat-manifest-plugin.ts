@@ -322,6 +322,7 @@ export function createInternalMmeCompatManifestPlugin(
                     fallbackReasons: entry.fallbackReasons,
                     fallbackMaterialStatus: entry.factoryStatus,
                     mappedFields: entry.mappedFields,
+                    textureCandidates: summarizeMappedTextureCandidates(entry.mappedFields),
                     unsupportedFeatures: entry.blockedByUnsupportedFeatures,
                     warnings: entry.warnings,
                 })), null, 2);
@@ -1017,6 +1018,28 @@ function summarizeTargetCandidates(candidates: readonly MmeFallbackTargetCandida
         matchingPolicy: candidate.matchingPolicy,
         warnings: candidate.warnings,
     }));
+}
+
+function summarizeMappedTextureCandidates(mappedFields: Readonly<Record<string, unknown>>) {
+    const textureFieldKeys = ["diffuseTexture", "emissiveTexture", "normalMap", "toonRamp", "sphereMap"] as const;
+    return textureFieldKeys
+        .map((fieldKey) => {
+            const field = mappedFields[fieldKey] as {
+                name?: string;
+                reference?: string | null;
+                resolvedPath?: string | null;
+                status?: string;
+            } | null | undefined;
+            if (!field) return null;
+            return {
+                type: fieldKey,
+                name: field.name ?? null,
+                reference: field.reference ?? null,
+                resolvedPath: field.resolvedPath ?? null,
+                status: field.status ?? "unresolved",
+            };
+        })
+        .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
 }
 
 function compareMmeTargetCandidates(
