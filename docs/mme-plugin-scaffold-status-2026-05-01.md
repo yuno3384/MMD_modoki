@@ -1,31 +1,25 @@
-# MME / Plugin Scaffold 状態メモ 2026-05-01
+# MME / Plugin Scaffold Status 2026-05-01
 
-この文書は `feature/plugin-effect-api` ブランチ上の MME / plugin scaffold の現状メモです。
-ファイル名は `2026-05-01` のままですが、内容は 2026-05-04 時点まで更新している living memo として扱います。
+この文書は `feature/plugin-effect-api` ブランチ上の MME / plugin scaffold 現状メモです。
+ファイル名は `2026-05-01` のままですが、内容は 2026-05-05 時点の実装状況まで更新している living memo として扱います。
 
-## PR 要約
+## PR Summary
 
-このブランチでは、MMD_modoki に対して次の 2 系統を段階的に追加しています。
+このブランチでは、`MMD_modoki` に対して以下の 2 系統を追加しています。
 
-- read-only な plugin / effect scaffold
-- 実験的な MME compatibility 調査・dry-run・限定 apply 導線
+- read-only plugin / effect scaffold
+- experimental MME compatibility pipeline
 
-目的は、いきなり一般的な MME 描画互換を実装することではなく、
-既存ランタイムを大きく壊さずに次の検証土台を作ることです。
+目的は、一般的な MME 描画互換を完成させることではなく、拡張境界と dry-run 中心の調査導線を reviewable な形で整えることです。
 
-- plugin host と hook 境界の明確化
-- MME 関連ファイルの discovery / parser / analyzer の足場作り
-- fallback material 適用前の dry-run 可視化
-- strict gate 付きの最小 apply / revert 実験
-
-## 実装済み
+## Implemented
 
 ### Plugin / Effect Scaffold
 
 - read-only `PluginHost`
-- scene lifecycle hook
-- model / accessory asset hook
-- minimal UI registry
+- scene lifecycle hooks
+- model / accessory asset hooks
+- minimal plugin UI registry
 - internal luminous glow adapter
 
 ### MME Compatibility Scaffold
@@ -48,22 +42,27 @@
 - filter / sort
 - selection / detail
 - read-only highlight plan scaffold
+- guarded debug highlight via reusable `HighlightLayer`
+  - selected precise/highlightable candidate only
+  - `multi-global-effect` and `unmatched` stay blocked
+  - same controller / same scene では `HighlightLayer` を再利用
 - MME file picker entry point
 - dry-run preview toggle
 
 ### Guarded Apply / Revert Debug UI
 
-- guarded Apply / Revert debug UI が存在する
-- apply は controller API 経由のみで実行される
-- apply は `basicToon` に限定
-- `matchingPolicy === "single-global-effect"` が必須
+- guarded Apply / Revert debug UI
+- apply は controller API 経由のみ
+- apply は experimental / debug-only
+- apply は `basicToon` のみ
+- apply は `matchingPolicy === "single-global-effect"` のみ
 - duplicate mesh target は block
-- revert は original material を復元する
-- revert は owned fallback material を dispose helper 経由で破棄する
+- revert は original material を復元
+- revert は owned fallback material を disposal helper 経由で破棄
 
 ## NOT IMPLEMENTED
 
-次はまだ未実装です。
+現時点で intentionally 未実装:
 
 - `textureToon` apply
 - `emissiveLite` apply
@@ -72,13 +71,14 @@
 - broad material replacement
 - general MME shader execution
 - HLSL-to-GLSL / WGSL translation
-- multipass / render-target-heavy effect 実行
+- multipass / render-target-heavy effect support
 - Ray-MMD rendering
 - broad renderer pipeline integration
-- real mesh highlight
-- camera jump / focus
+- no production/high-fidelity highlight system
+- no camera jump / focus to target
+- no material-based highlight effect
 
-このブランチは、一般的な MME rendering support や Ray-MMD support を提供するものではありません。
+この scaffold は full MME support でも Ray-MMD support でもありません。rendering parity も主張しません。
 
 ## Safety Guarantees
 
@@ -86,45 +86,48 @@
 
 - preview は dry-run
 - candidate view は read-only
-- highlight plan は scaffold のみ
-- preview / candidate / highlight 表示は scene / material / mesh / camera を mutate しない
+- guarded debug highlight exists, but remains debug-only and non-destructive
+- preview / candidate / highlight は scene / material / mesh / camera を mutate しない
+- highlight は `mesh.material` を変更しない
+- highlight は material color / property を変更しない
+- highlight は camera を動かさない
+- highlight は apply / revert を trigger しない
+- `clearHighlight()`, preview disable, manifest clear, controller dispose で highlight state は安全に cleanup される
 
 ### Apply
 
-apply は完全に自由ではなく、次の条件を全部満たしたときだけ controller 側で許可されます。
+apply は controller 側で明示ガードされ、UI 条件とは別に再検証されます。
 
 - controller enabled
 - `mode === "apply"`
 - `experimentalApplyEnabled === true`
-- valid apply plan が存在
-- controller validation を通過
+- valid apply plan
+- controller validation success
 
-controller validation では UI 条件を再チェックします。UI で誤って button が有効に見えても、controller が最終ガードです。
+strict apply limits:
 
-追加の strict limit:
+- `basicToon` only
+- `single-global-effect` only
+- duplicate mesh targets blocked
+- no partial apply
 
-- `basicToon` のみ
-- `single-global-effect` のみ
-- duplicate mesh target は block
-- partial apply は許可しない
-
-UI から controller を bypass する apply path は入れていません。
+UI から controller validation を bypass する path はありません。
 
 ## Milestone Summary
 
 ### Step 1-5
 
 - Step 1: `PluginHost` / plugin types / no-op registry
-- Step 2: scene lifecycle hook を `MmdManager` に配線
-- Step 3: model / accessory load hook を配線
-- Step 4: shared material target helper を追加
-- Step 5: luminous glow を internal `EffectPlugin` adapter 化
+- Step 2: scene lifecycle hooks in `MmdManager`
+- Step 3: model / accessory load hooks
+- Step 4: shared material target helpers
+- Step 5: luminous glow internal `EffectPlugin` adapter
 
 ### Step 6-10
 
-- Step 6: plugin panel 用の minimal UI registry
-- Step 7: internal `mme-compat-manifest` plugin と file discovery
-- Step 8: partial `.fx` structure parser
+- Step 6: minimal plugin UI registry integration
+- Step 7: internal `mme-compat-manifest` plugin and file discovery
+- Step 8: partial `.fx` structural parser
 - Step 9: parsed effect mapper / analyzer
 - Step 10: fallback preset planner
 
@@ -132,93 +135,90 @@ UI から controller を bypass する apply path は入れていません。
 
 - Step 11: fallback material factory scaffold
 - Step 12: preview / apply controller scaffold
-- Step 13: debug panel の preview source を controller に集約
+- Step 13: preview pipeline consolidated through controller
 - Step 14: apply transaction / revert scaffold
 - Step 15: internal MME file registration API
 
 ### Step 16-20
 
-- Step 16: registered file path normalization と root selection policy
-- Step 17: debug panel の minimal file picker
-- Step 18: preview toggle を panel から有効化
-- Step 19: duplicate な dry-run preview computation を整理し、preview cleanup path を統一
+- Step 16: registered file path normalization and root selection policy
+- Step 17: minimal debug-panel file picker
+- Step 18: preview toggle in debug panel
+- Step 19: removed duplicate dry-run preview computation and consolidated preview cleanup path
 - Step 20: experimental apply gate
 
 ### Step 21-27
 
-- Step 21: Apply Status 表示の gate 反映
-- Step 22: scaffold status docs 整備
+- Step 21: Apply Status cleanup for gate state
+- Step 22: scaffold status docs
 - Step 23: scene material target candidate view
 - Step 24: candidate filter / sort
 - Step 25: candidate selection / detail view
-- Step 26: selected candidate 用 highlight plan scaffold
-- Step 27: `MmeFallbackHighlightPlan.reason` の literal union 化
+- Step 26: selected candidate highlight plan scaffold
+- Step 27: `MmeFallbackHighlightPlan.reason` literal-union cleanup
 
 ### Step 28-35
 
-- Step 28: PR / milestone documentation 整備
+- Step 28: PR / milestone documentation update
 - Step 29: skipped
-- Step 30: undoable `basicToon` apply 実装
-- Step 31: fallback material disposal helper への cleanup 統一
-- Step 32: disposal helper dual-input contract の文書化
-- Step 33: guarded Apply / Revert debug UI 配線
-- Step 34: Apply Status を `getApplyAvailability()` 表示に整合
-- Step 35: `getApplyAvailability()` の result field を `enabled` から `available` へ rename
+- Step 30: undoable `basicToon` apply
+- Step 31: fallback material disposal helper cleanup
+- Step 32: disposal helper dual-input contract docs
+- Step 33: guarded Apply / Revert debug UI wiring
+- Step 34: Apply Status aligned with `getApplyAvailability()`
+- Step 35: `getApplyAvailability()` result field rename `enabled` -> `available`
 
-## 現在の限定 apply の意味
+### Step 36-42
 
-今の apply は「一般的な MME fallback apply」ではなく、strictly limited な safety experiment です。
+- Step 36: status document updated after guarded Apply / Revert UI
+- Step 37: final PR description section
+- Step 38: safer `basicToon` field mapping quality improvements
+- Step 39: `specularPower` heuristic documentation
+- Step 40: guarded candidate debug highlight
+- Step 41: reusable `HighlightLayer` lifecycle cleanup
+- Step 42: documentation update for guarded debug highlight
+
+## Current Experimental Apply Scope
+
+現在の apply は strictly limited な safety experiment です。
 
 - debug-only
 - experimental
 - undoable
 - `basicToon` only
-- single-global-effect only
+- `single-global-effect` only
 
-つまり、「ごく狭い条件で元に戻せる material 置換を通せるか」を見るための段階です。
+一般的な MME fallback apply や arbitrary `.fx` の反映を意味しません。
 
 ## Validation Status
 
-2026-05-04 時点の確認結果:
+2026-05-05 時点の確認:
 
 - `npm.cmd run lint`
   - success
   - `0 errors / 455 warnings`
 - `node_modules\.bin\tsc.cmd --noEmit`
   - fail
-  - 既存 repo-wide TypeScript errors が残っている
+  - 既存の repo-wide TypeScript errors によるもの
 - targeted `Vitest`
-  - この sandbox では `spawn EPERM` で実行できない
+  - この sandbox 環境では `spawn EPERM`
 
-このため、現時点の健全性確認は主に changed-file lint と repo-wide lint success を基準にしています。
+## Next Steps
 
-## 次の候補
+- Step 43: apply plan target list の read-only subview
+- target-to-effect association precision の改善
+- `textureToon` を同じ gate の下で試すかどうか再評価
+- Ray-MMD は別トラックを作らない限り unsupported のまま維持
 
-### Step 36
+## Non-goals
 
-- apply plan 対象の read-only 一覧を debug panel に追加
-- Apply 前に「どの mesh / material が置換対象か」を明示
+この scaffold は以下をまだ提供しません。
 
-### Step 37 以降の候補
-
-- `basicToon` apply の UI 側説明強化
-- real undo transaction 表示の追加
-- `textureToon` の可否検討
-  - ただし strict gate 維持前提
-- per-material binding 精度の改善
-
-## 明示的に主張しないこと
-
-この scaffold は次を主張しません。
-
-- 一般的な MME rendering compatibility
+- general MME rendering compatibility
 - arbitrary `.fx` application
 - Ray-MMD support
 - renderer parity
 - production-ready material replacement system
-
-現状は、MMD_modoki の既存描画系を大きく壊さずに、
-plugin 境界・MME 調査・dry-run・限定 apply 実験を reviewable に保つことを優先しています。
 
 ## PR Description
 
@@ -244,6 +244,7 @@ The goal is to create reviewable extension points and a safe investigation path 
 - added fallback preset planning and a fallback material factory scaffold
 - added a dry-run preview/apply controller with experimental gating
 - added a read-only candidate view with filter/sort/selection/detail/highlight-plan scaffolding
+- added guarded, non-destructive debug candidate highlighting through a reusable `HighlightLayer`
 - added guarded debug-panel Apply/Revert wiring for a very limited fallback path
 
 #### Safety boundaries
@@ -253,6 +254,9 @@ The goal is to create reviewable extension points and a safe investigation path 
 - arbitrary `.fx` rendering is not supported
 - HLSL translation/execution is not implemented
 - preview remains dry-run by default
+- debug highlight is non-destructive and controller-guarded
+- debug highlight only activates for selected precise/highlightable candidates
+- debug highlight does not mutate `mesh.material`, material properties, or camera state
 - UI apply routes through the controller only; there is no bypass path
 - apply is limited to experimental `basicToon` only
 - apply requires:
@@ -272,6 +276,9 @@ The goal is to create reviewable extension points and a safe investigation path 
 - no general material replacement pipeline
 - no `textureToon`, `emissiveLite`, or `katameLike` apply path
 - no arbitrary shader execution
+- no production/high-fidelity highlight system
+- no camera focus/jump-to-target workflow
+- no material-based highlight rendering path
 - no broad renderer pipeline integration
 - no rendering parity claim with MME or Ray-MMD
 - most of the MME path is still investigation/debug scaffold rather than production behavior
