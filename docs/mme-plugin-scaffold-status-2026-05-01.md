@@ -41,6 +41,10 @@
 - scene material target candidate view
 - filter / sort
 - selection / detail
+- `textureToon` dry-run preview diagnostics
+  - texture-like fields show raw reference, resolved path, and candidate status when detected
+  - unresolved or weak texture references stay nullable or warning-only
+  - preview guidance remains conservative and does not imply texture binding support
 - read-only highlight plan scaffold
 - guarded debug highlight via reusable `HighlightLayer`
   - selected precise/highlightable candidate only
@@ -68,6 +72,7 @@
 - `emissiveLite` apply
 - `katameLike` apply
 - arbitrary `.fx` apply
+- arbitrary `.fx` texture binding / texture assignment
 - broad material replacement
 - general MME shader execution
 - HLSL-to-GLSL / WGSL translation
@@ -86,6 +91,9 @@
 
 - preview は dry-run
 - candidate view は read-only
+- `textureToon` preview is diagnostics-only
+- weak candidate-only / unresolved texture evidence does not recommend `textureToon`
+- resolved texture evidence may produce preview guidance only
 - guarded debug highlight exists, but remains debug-only and non-destructive
 - preview / candidate / highlight は scene / material / mesh / camera を mutate しない
 - highlight は `mesh.material` を変更しない
@@ -108,6 +116,7 @@ strict apply limits:
 
 - `basicToon` only
 - `single-global-effect` only
+- `textureToon` is not apply-eligible
 - duplicate mesh targets blocked
 - no partial apply
 
@@ -177,6 +186,11 @@ UI から controller validation を bypass する path はありません。
 - Step 40: guarded candidate debug highlight
 - Step 41: reusable `HighlightLayer` lifecycle cleanup
 - Step 42: documentation update for guarded debug highlight
+
+### Step 43-44
+
+- Step 43: `textureToon` dry-run preview diagnostics
+- Step 44: conservative `textureToon` planning policy
 
 ## Current Experimental Apply Scope
 
@@ -252,8 +266,12 @@ The goal is to create reviewable extension points and a safe investigation path 
 - this is not full MME support
 - Ray-MMD is not supported
 - arbitrary `.fx` rendering is not supported
+- arbitrary `.fx` texture binding is not supported
 - HLSL translation/execution is not implemented
 - preview remains dry-run by default
+- `textureToon` remains preview-only and diagnostics-oriented
+- weak texture evidence stays warning-only and does not recommend `textureToon`
+- resolved texture evidence may improve preview guidance, but does not enable texture assignment or apply
 - debug highlight is non-destructive and controller-guarded
 - debug highlight only activates for selected precise/highlightable candidates
 - debug highlight does not mutate `mesh.material`, material properties, or camera state
@@ -275,6 +293,7 @@ The goal is to create reviewable extension points and a safe investigation path 
 
 - no general material replacement pipeline
 - no `textureToon`, `emissiveLite`, or `katameLike` apply path
+- no `textureToon` apply eligibility
 - no arbitrary shader execution
 - no production/high-fidelity highlight system
 - no camera focus/jump-to-target workflow
