@@ -312,6 +312,27 @@ export function createInternalMmeCompatManifestPlugin(
                 const applyAvailability = fallbackController.getApplyAvailability();
                 const revertEnabled = applyPlan?.status === "applied";
                 appendSummaryRow(summary, "Apply Status", getMmeCompatApplyStatus(controllerState, applyAvailability));
+
+                const texturePreviewLabel = document.createElement("div");
+                texturePreviewLabel.style.marginTop = "8px";
+                texturePreviewLabel.style.fontSize = "12px";
+                texturePreviewLabel.style.opacity = "0.75";
+                texturePreviewLabel.textContent = "Texture Preview Summary. Read-only dry-run diagnostics for parsed effect candidates.";
+                summary.appendChild(texturePreviewLabel);
+
+                const texturePreviewSummary = document.createElement("pre");
+                texturePreviewSummary.textContent = previewPlan
+                    .map((entry) => formatMmeTexturePreviewSummary(entry.effectId, entry.mappedFields))
+                    .join("\n\n");
+                texturePreviewSummary.style.margin = "8px 0 0";
+                texturePreviewSummary.style.padding = "8px";
+                texturePreviewSummary.style.maxHeight = "180px";
+                texturePreviewSummary.style.overflow = "auto";
+                texturePreviewSummary.style.whiteSpace = "pre-wrap";
+                texturePreviewSummary.style.background = "rgba(15, 23, 42, 0.18)";
+                texturePreviewSummary.style.borderRadius = "8px";
+                summary.appendChild(texturePreviewSummary);
+
                 const parsedSummary = document.createElement("pre");
                 parsedSummary.textContent = JSON.stringify(previewPlan.map((entry) => ({
                     path: entry.effectId,
@@ -1040,6 +1061,74 @@ function summarizeMappedTextureCandidates(mappedFields: Readonly<Record<string, 
             };
         })
         .filter((entry): entry is NonNullable<typeof entry> => entry !== null);
+}
+
+type MmeTexturePreviewSummaryEntry = {
+    readonly label: "Diffuse" | "Toon" | "Sphere";
+    readonly status: "resolved" | "candidate-only" | "none";
+    readonly reference: string | null;
+    readonly resolvedPath: string | null;
+};
+
+export function buildMmeTexturePreviewSummaryEntries(
+    mappedFields: Readonly<Record<string, unknown>>,
+): readonly MmeTexturePreviewSummaryEntry[] {
+    const summarizedCandidates = summarizeMappedTextureCandidates(mappedFields);
+    const candidateByType = new Map(summarizedCandidates.map((candidate) => [candidate.type, candidate]));
+
+    return [
+        buildMmeTexturePreviewSummaryEntry("Diffuse", candidateByType.get("diffuseTexture")),
+        buildMmeTexturePreviewSummaryEntry("Toon", candidateByType.get("toonRamp")),
+        buildMmeTexturePreviewSummaryEntry("Sphere", candidateByType.get("sphereMap")),
+    ];
+}
+
+export function formatMmeTexturePreviewSummary(
+    effectId: string,
+    mappedFields: Readonly<Record<string, unknown>>,
+): string {
+    const lines = [`Effect: ${effectId}`];
+
+    for (const entry of buildMmeTexturePreviewSummaryEntries(mappedFields)) {
+        lines.push(formatMmeTexturePreviewSummaryEntry(entry));
+    }
+
+    return lines.join("\n");
+}
+
+function buildMmeTexturePreviewSummaryEntry(
+    label: MmeTexturePreviewSummaryEntry["label"],
+    candidate: ReturnType<typeof summarizeMappedTextureCandidates>[number] | undefined,
+): MmeTexturePreviewSummaryEntry {
+    if (!candidate) {
+        return {
+            label,
+            status: "none",
+            reference: null,
+            resolvedPath: null,
+        };
+    }
+
+    const status = candidate.status === "resolved" || candidate.status === "candidate-only"
+        ? candidate.status
+        : "none";
+
+    return {
+        label,
+        status,
+        reference: candidate.reference,
+        resolvedPath: candidate.resolvedPath,
+    };
+}
+
+function formatMmeTexturePreviewSummaryEntry(entry: MmeTexturePreviewSummaryEntry): string {
+    if (entry.status === "none") {
+        return `${entry.label}: none`;
+    }
+
+    const displayReference = entry.reference ?? "(unknown reference)";
+    const displayPath = entry.resolvedPath ?? "(unresolved)";
+    return `${entry.label}: ${entry.status} (${displayReference})\n  ref: "${displayReference}"\n  path: ${displayPath}`;
 }
 
 function compareMmeTargetCandidates(

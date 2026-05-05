@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
+    buildMmeTexturePreviewSummaryEntries,
     createInternalMmeCompatManifestPlugin,
     filterAndSortMmeTargetCandidates,
+    formatMmeTexturePreviewSummary,
     getMmeCompatApplyButtonState,
     getSelectedMmeTargetCandidateDetail,
     getSelectedMmeTargetCandidateHighlightDetail,
@@ -28,6 +30,54 @@ const TEST_SCENE_CONTEXT: SceneHookContext = {
 };
 
 describe("InternalMmeCompatManifestPlugin", () => {
+    it("renders texture preview summary for resolved, candidate-only, and none states", () => {
+        const mappedFields = {
+            diffuseTexture: {
+                name: "MainTex",
+                reference: "tex/body.png",
+                resolvedPath: "/assets/model/body.png",
+                status: "resolved",
+            },
+            toonRamp: {
+                name: "ToonRamp",
+                reference: "toon01.bmp",
+                resolvedPath: null,
+                status: "candidate-only",
+            },
+        } satisfies Record<string, unknown>;
+
+        const summary = formatMmeTexturePreviewSummary("bundle/main.fx", mappedFields);
+
+        expect(summary).toContain("Effect: bundle/main.fx");
+        expect(summary).toContain('Diffuse: resolved (tex/body.png)');
+        expect(summary).toContain('ref: "tex/body.png"');
+        expect(summary).toContain("path: /assets/model/body.png");
+        expect(summary).toContain("Toon: candidate-only (toon01.bmp)");
+        expect(summary).toContain("path: (unresolved)");
+        expect(summary).toContain("Sphere: none");
+    });
+
+    it("builds texture preview summary entries without mutating source data and tolerates missing fields", () => {
+        const mappedFields = {
+            sphereMap: {
+                name: "SphereTex",
+                reference: "env/matcap.sph",
+                resolvedPath: null,
+                status: "candidate-only",
+            },
+        } satisfies Record<string, unknown>;
+        const snapshot = JSON.parse(JSON.stringify(mappedFields)) as Record<string, unknown>;
+
+        const entries = buildMmeTexturePreviewSummaryEntries(mappedFields);
+
+        expect(entries).toEqual([
+            { label: "Diffuse", status: "none", reference: null, resolvedPath: null },
+            { label: "Toon", status: "none", reference: null, resolvedPath: null },
+            { label: "Sphere", status: "candidate-only", reference: "env/matcap.sph", resolvedPath: null },
+        ]);
+        expect(mappedFields).toEqual(snapshot);
+    });
+
     it("filters candidates by kind, preset, and status without mutating the source array", () => {
         const candidates = createCandidateFixtures();
         const originalSnapshot = [...candidates];
