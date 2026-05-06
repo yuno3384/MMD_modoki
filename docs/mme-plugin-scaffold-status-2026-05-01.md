@@ -12,6 +12,36 @@
 
 目的は、一般的な MME 再現を宣言することではなく、reviewable な拡張境界と安全な調査導線を先に整えることです。
 
+## Why This PR Exists
+
+This PR takes a scaffold-first approach so the plugin/effect extension points and MME investigation path can be reviewed before broader renderer work begins.
+
+The intent is to keep the branch reviewable and safe:
+- establish dry-run diagnostics first
+- keep experimental behavior behind explicit gates
+- make future material-application work incremental and reversible
+
+## Current Supported Scope
+
+- preview-only MME diagnostics and manifest / `.fx` structure inspection
+- conservative `textureToon` preview guidance
+  - weak or unresolved texture evidence remains warning-only
+- guarded experimental `basicToon` apply
+  - debug-only
+  - explicit gate required
+  - `single-global-effect` only
+- undo / revert support for the guarded `basicToon` path
+- debug-only target highlight via reusable `HighlightLayer`
+
+## Explicitly Unsupported
+
+- arbitrary `.fx` rendering
+- HLSL translation or execution
+- Ray-MMD rendering
+- `textureToon` / `emissiveLite` / `katameLike` apply
+- automatic per-material effect binding
+- broad renderer pipeline integration
+
 ## Implemented
 
 ### Plugin / Effect Scaffold
