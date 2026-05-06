@@ -5,6 +5,7 @@ import {
     buildMmeTexturePreviewSummaryEntries,
     createInternalMmeCompatManifestPlugin,
     filterAndSortMmeTargetCandidates,
+    formatMmeCompatApplyPlanRowLines,
     formatMmeTexturePreviewSummary,
     getMmeCompatApplyButtonState,
     getSelectedMmeTargetCandidateDetail,
@@ -171,6 +172,25 @@ describe("InternalMmeCompatManifestPlugin", () => {
             reason: "apply-plan-missing",
             warnings: [],
         })).toEqual([]);
+    });
+
+    it("formats apply-plan row wording with effect id without mutating row data", () => {
+        const row = {
+            targetId: "bundle/main.fx",
+            ownerName: "Miku",
+            meshName: "BodyMesh",
+            materialName: "BodyMaterial",
+            originalMaterialAvailability: "available",
+            plannedFallbackPreset: "basicToon",
+            matchingPolicy: "single-global-effect",
+            validationReason: null,
+        } as const;
+
+        const lines = formatMmeCompatApplyPlanRowLines(row);
+
+        expect(lines).toContain("effect id: bundle/main.fx");
+        expect(lines).not.toContain("target: bundle/main.fx");
+        expect(row.targetId).toBe("bundle/main.fx");
     });
 
     it("filters candidates by kind, preset, and status without mutating the source array", () => {

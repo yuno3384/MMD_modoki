@@ -930,6 +930,18 @@ export function buildMmeCompatApplyPlanRows(
     }));
 }
 
+export function formatMmeCompatApplyPlanRowLines(
+    row: MmeCompatApplyPlanRow,
+): readonly string[] {
+    return [
+        `effect id: ${row.targetId}`,
+        `original material: ${row.originalMaterialAvailability}`,
+        `preset: ${row.plannedFallbackPreset}`,
+        `matching: ${row.matchingPolicy ?? "(unknown)"}`,
+        `validation: ${row.validationReason ?? "ready"}`,
+    ];
+}
+
 export function filterAndSortMmeTargetCandidates(
     candidates: readonly MmeFallbackTargetCandidate[],
     options: MmeCandidateViewOptions,
@@ -1195,13 +1207,7 @@ function createMmeCompatApplyPlanView(
         title.style.fontWeight = "600";
         card.appendChild(title);
 
-        for (const line of [
-            `target: ${row.targetId}`,
-            `original material: ${row.originalMaterialAvailability}`,
-            `preset: ${row.plannedFallbackPreset}`,
-            `matching: ${row.matchingPolicy ?? "(unknown)"}`,
-            `validation: ${row.validationReason ?? "ready"}`,
-        ]) {
+        for (const line of formatMmeCompatApplyPlanRowLines(row)) {
             const detail = document.createElement("div");
             detail.textContent = line;
             detail.style.fontSize = "12px";
