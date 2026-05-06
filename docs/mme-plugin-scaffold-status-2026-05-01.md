@@ -254,6 +254,35 @@ UI から controller validation を bypass する path はありません。
 
 任意の `.fx` をそのまま適用する仕組みではありません。
 
+## Reviewer Quick Start
+
+- open the MME compatibility debug panel in the app UI
+- register an MME bundle through the debug-panel file picker
+  - supported inputs are `.x`, `.fx`, `.fxsub`, and `.conf`
+- enable preview to inspect dry-run diagnostics
+- inspect:
+  - candidate view
+  - selected-candidate detail
+  - debug highlight for precise candidates only
+  - `textureToon` preview summary and unresolved warnings
+- guarded Apply/Revert is available only for the narrow experimental `basicToon` path
+  - Apply remains controller-guarded
+  - Revert restores original materials when guarded apply was used
+
+Safety reminders:
+- preview is dry-run only
+- apply is experimental and `basicToon`-only
+- revert restores original materials
+- unsupported effects remain diagnostics-only
+
+## Suggested Review Focus
+
+- architecture separation between host, parser/analyzer, planner/factory, controller, and UI
+- controller safety boundaries and explicit gating
+- dry-run-first workflow before broader renderer work
+- reviewability and future extensibility
+- conservative handling of unsupported or weakly matched effects
+
 ## Validation Status
 
 2026-05-06 時点:
@@ -323,18 +352,11 @@ The branch is intentionally scaffold-first and dry-run-first. It introduces revi
 
 #### Experimental
 
-- `basicToon` is the only experimental apply path
-- apply is debug-only and routes through controller guards only
-- apply requires:
-  - controller enabled
-  - `mode === "apply"`
-  - `experimentalApplyEnabled === true`
-  - a valid apply plan
-  - validation success
-- apply remains blocked for:
-  - non-`basicToon` presets
-  - non-`single-global-effect` candidates
-  - duplicate mesh targets
+- Guarded `basicToon`-only apply path
+- Strict controller validation and gating
+- Undo/revert support
+- Revert restores the original material and disposes the created fallback material
+- Debug-oriented workflow only
 
 #### Unsupported / Intentionally Not Implemented
 
