@@ -294,68 +294,63 @@ Add plugin/effect scaffold and experimental MME compatibility pipeline
 
 ### Copy-paste-ready PR description
 
-#### Summary
+#### Overview
 
-This PR adds a read-only plugin/effect scaffold and an experimental MME compatibility pipeline to `feature/plugin-effect-api`.
+This PR adds plugin/effect scaffold groundwork and an experimental MME compatibility investigation pipeline.
 
-The goal is to create reviewable extension points and a safe investigation path for MME-style effects without claiming general MME rendering support.
+The branch is intentionally scaffold-first and dry-run-first. It introduces reviewable extension points, conservative diagnostics, and a narrowly gated experimental apply path without claiming general MME rendering support.
 
-#### What changed
+#### Implemented
 
-- added a read-only `PluginHost` with scene lifecycle and asset hooks
-- added a minimal plugin UI registry
-- wrapped the existing luminous/glow behavior as an internal effect adapter
-- added MME file discovery and manifest loading for `.x`, `.fx`, `.fxsub`, and `.conf`
-- added a partial `.fx` structural parser and effect analyzer
-- added fallback preset planning and a fallback material factory scaffold
-- added a dry-run preview/apply controller with experimental gating
-- added a read-only candidate view with filter/sort/selection/detail/highlight-plan scaffolding
-- added guarded, non-destructive debug candidate highlighting through a reusable `HighlightLayer`
-- added guarded debug-panel Apply/Revert wiring for a very limited fallback path
-- added a read-only Apply Plan Targets preview before guarded apply
-  - uses `effect id` wording in the runtime panel
+- read-only plugin/effect host groundwork
+  - `PluginHost`
+  - scene lifecycle hooks
+  - model/accessory asset hooks
+  - minimal plugin UI registry
+  - internal luminous/glow adapter
+- MME compatibility investigation pipeline
+  - manifest discovery/loading for `.x`, `.fx`, `.fxsub`, `.conf`
+  - partial `.fx` structural parser and analyzer
+  - fallback mapper, planner, material factory scaffold, and controller
+- dry-run diagnostics and debug tooling
+  - preview diagnostics
+  - candidate view with filter/sort/selection/detail
+  - guarded debug highlight via reusable `HighlightLayer`
+  - read-only Apply Plan Targets preview using `effect id` wording
+- guarded experimental fallback path
+  - `basicToon`-only apply/revert
+  - undo/revert support
 
-#### Safety boundaries
+#### Experimental
 
-- this is not full MME support
-- Ray-MMD is not supported
-- arbitrary `.fx` rendering is not supported
-- arbitrary `.fx` texture binding is not supported
-- HLSL translation/execution is not implemented
-- preview remains dry-run by default
-- `textureToon` remains preview-only and diagnostics-oriented
-- weak texture evidence stays warning-only and does not recommend `textureToon`
-- resolved texture evidence may improve preview guidance, but does not enable texture assignment or apply
-- debug highlight is non-destructive and controller-guarded
-- debug highlight only activates for selected precise/highlightable candidates
-- debug highlight does not mutate `mesh.material`, material properties, or camera state
-- UI apply routes through the controller only; there is no bypass path
-- apply is limited to experimental `basicToon` only
+- `basicToon` is the only experimental apply path
+- apply is debug-only and routes through controller guards only
 - apply requires:
   - controller enabled
   - `mode === "apply"`
   - `experimentalApplyEnabled === true`
   - a valid apply plan
-  - controller validation success
-- apply is blocked for:
+  - validation success
+- apply remains blocked for:
   - non-`basicToon` presets
   - non-`single-global-effect` candidates
   - duplicate mesh targets
-- apply is undoable; revert restores the original material and disposes the owned fallback material
 
-#### Current limitations
+#### Unsupported / Intentionally Not Implemented
 
-- no general material replacement pipeline
-- no `textureToon`, `emissiveLite`, or `katameLike` apply path
-- no `textureToon` apply eligibility
-- `basicToon` is the only experimental apply path
-- no arbitrary shader execution
-- no production/high-fidelity highlight system
-- no camera focus/jump-to-target workflow
-- no material-based highlight rendering path
-- no broad renderer pipeline integration
-- no rendering parity claim with MME or Ray-MMD
-- most of the MME path is still investigation/debug scaffold rather than production behavior
+- arbitrary `.fx` rendering
+- HLSL translation or execution
+- Ray-MMD rendering
+- `textureToon` / `emissiveLite` / `katameLike` apply
+- automatic per-material effect binding
+- broad renderer pipeline integration
+
+#### Reviewer Guidance
+
+- this PR is scaffold-first
+- rendering parity is intentionally deferred
+- review should focus on architecture, safety boundaries, disposal/undo behavior, and extensibility
+- this PR should not be read as full MME support
 
 #### Validation
 
@@ -366,12 +361,3 @@ The goal is to create reviewable extension points and a safe investigation path 
   - still fails due to existing repo-wide TypeScript errors outside this scaffold work
 - targeted `Vitest`
   - could not run in this sandbox because of `spawn EPERM`
-
-#### Next steps
-
-- add original-material vs fallback-material diff summary before guarded apply
-- polish Apply Plan Targets UI field labels and target/effect wording
-- add DOM test coverage for Apply Plan Targets
-- improve target-to-effect association precision
-- decide whether `textureToon` is safe to prototype behind the same gate
-- keep Ray-MMD explicitly unsupported unless a separate design/validation track is created
