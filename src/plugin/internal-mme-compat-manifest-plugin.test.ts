@@ -630,6 +630,78 @@ describe("InternalMmeCompatManifestPlugin", () => {
             plugin.onDispose?.(TEST_SCENE_CONTEXT);
         }
     });
+
+    it("removing one registered file updates the manifest without mutating unrelated files", () => {
+        const plugin = createInternalMmeCompatManifestPlugin();
+
+        try {
+            plugin.registerMmeFile({
+                path: "C:\\Effects\\first.fx",
+                text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+            });
+            plugin.registerMmeFile({
+                path: "C:\\Effects\\second.fxsub",
+                text: `#include "first.fx"`,
+            });
+
+            const removeResult = plugin.removeMmeFile("C:\\Effects\\second.fxsub");
+
+            expect(removeResult).toMatchObject({
+                ok: true,
+            });
+            expect(plugin.getCurrentMmeManifest()?.rootFile).toBe("C:/Effects/first.fx");
+            expect(plugin.getCurrentMmeManifest()?.discoveredFxFiles).toEqual(["C:/Effects/first.fx"]);
+            expect(plugin.getCurrentMmeManifest()?.discoveredFxSubFiles).toEqual([]);
+        } finally {
+            plugin.onDispose?.(TEST_SCENE_CONTEXT);
+        }
+    });
+
+    it("removing an x-discovered same-name fx safely invalidates that discovery", () => {
+        const plugin = createInternalMmeCompatManifestPlugin();
+
+        try {
+            plugin.registerMmeFile({
+                path: "C:\\Effects\\ray.x",
+                text: "xof 0303txt 0032",
+            });
+            plugin.registerMmeFile({
+                path: "C:\\Effects\\ray.fx",
+                text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+            });
+
+            const removeResult = plugin.removeMmeFile("C:\\Effects\\ray.fx");
+
+            expect(removeResult).toMatchObject({
+                ok: true,
+            });
+            expect(plugin.getCurrentMmeManifest()?.rootFile).toBe("C:/Effects/ray.x");
+            expect(plugin.getCurrentMmeManifest()?.discoveredFxFiles).toEqual([]);
+        } finally {
+            plugin.onDispose?.(TEST_SCENE_CONTEXT);
+        }
+    });
+
+    it("removing an unregistered file fails safely without clearing the current manifest", () => {
+        const plugin = createInternalMmeCompatManifestPlugin();
+
+        try {
+            plugin.registerMmeFile({
+                path: "C:\\Effects\\main.fx",
+                text: `float4 Diffuse : DIFFUSE = float4(1, 1, 1, 1);`,
+            });
+
+            const removeResult = plugin.removeMmeFile("C:\\Effects\\missing.fx");
+
+            expect(removeResult).toMatchObject({
+                ok: false,
+                reason: "file-not-registered",
+            });
+            expect(plugin.getCurrentMmeManifest()?.rootFile).toBe("C:/Effects/main.fx");
+        } finally {
+            plugin.onDispose?.(TEST_SCENE_CONTEXT);
+        }
+    });
 });
 
 function createCandidateFixtures(): MmeFallbackTargetCandidate[] {

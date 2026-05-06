@@ -25,6 +25,12 @@ export type MmeFileRegistrationResult = {
     reason?: "unsupported-extension";
 };
 
+export type MmeFileRemovalResult = {
+    ok: boolean;
+    manifest: MMEManifest | null;
+    reason?: "file-not-registered";
+};
+
 type MmePickerFileLike = {
     readonly name: string;
     readonly webkitRelativePath?: string;
@@ -90,6 +96,7 @@ export type InternalMmeCompatManifestPlugin = ScenePlugin & {
     getCurrentMmeManifest(): MMEManifest | null;
     discoverManifest(rootFile: string, files: readonly MmeCompatFileEntry[]): MMEManifest;
     registerMmeFile(file: MmeCompatFileEntry): MmeFileRegistrationResult;
+    removeMmeFile(path: string): MmeFileRemovalResult;
     clearManifest(): void;
     clearMmeManifest(): void;
 };
@@ -130,16 +137,29 @@ export function createInternalMmeCompatManifestPlugin(
         sortKey: "confidenceDesc",
     };
 
-    const clearCurrentManifest = (): void => {
-        manifest = null;
-        registeredFiles.clear();
-        lastPickerWarnings = [];
-        lastPickerAcceptedCount = 0;
+    const resetInteractiveManifestState = (): void => {
         selectedCandidateId = null;
         lastApplyActionMessage = null;
         lastHighlightActionMessage = null;
         fallbackController.setEnabled(false);
         fallbackController.setExperimentalApplyEnabled(false);
+    };
+
+    const rebuildManifestFromRegisteredFiles = (): MMEManifest | null => {
+        const selectedRootFile = selectRegisteredRootFile(Array.from(registeredFiles.values()));
+        manifest = selectedRootFile
+            ? createMmeManifest(selectedRootFile, Array.from(registeredFiles.values()))
+            : null;
+        lastPickerAcceptedCount = registeredFiles.size;
+        return manifest;
+    };
+
+    const clearCurrentManifest = (): void => {
+        manifest = null;
+        registeredFiles.clear();
+        lastPickerWarnings = [];
+        lastPickerAcceptedCount = 0;
+        resetInteractiveManifestState();
         rerenderPanels();
     };
 
@@ -204,6 +224,47 @@ export function createInternalMmeCompatManifestPlugin(
             warningBlock.style.background = "rgba(120, 53, 15, 0.18)";
             warningBlock.style.borderRadius = "8px";
             pickerSection.appendChild(warningBlock);
+        }
+
+        if (registeredFiles.size > 0) {
+            const registeredList = document.createElement("div");
+            registeredList.style.display = "grid";
+            registeredList.style.gap = "6px";
+
+            const registeredListLabel = document.createElement("div");
+            registeredListLabel.textContent = "Registered file entries";
+            registeredListLabel.style.fontWeight = "600";
+            registeredList.appendChild(registeredListLabel);
+
+            for (const registeredFile of registeredFiles.values()) {
+                const row = document.createElement("div");
+                row.style.display = "grid";
+                row.style.gridTemplateColumns = "minmax(0, 1fr) auto";
+                row.style.alignItems = "center";
+                row.style.gap = "8px";
+                row.style.padding = "8px";
+                row.style.borderRadius = "8px";
+                row.style.background = "rgba(255, 255, 255, 0.04)";
+
+                const label = document.createElement("div");
+                label.textContent = registeredFile.path;
+                label.style.wordBreak = "break-all";
+                label.style.fontSize = "12px";
+                row.appendChild(label);
+
+                const removeButton = document.createElement("button");
+                removeButton.type = "button";
+                removeButton.textContent = "Remove";
+                removeButton.style.whiteSpace = "nowrap";
+                removeButton.addEventListener("click", () => {
+                    pluginApi.removeMmeFile(registeredFile.path);
+                });
+                row.appendChild(removeButton);
+
+                registeredList.appendChild(row);
+            }
+
+            pickerSection.appendChild(registeredList);
         }
 
         summary.appendChild(pickerSection);
@@ -752,6 +813,8 @@ export function createInternalMmeCompatManifestPlugin(
                 registeredFiles.set(normalizedFile.path, normalizedFile);
             }
             manifest = createMmeManifest(normalizeMmePath(rootFile), Array.from(registeredFiles.values()));
+            lastPickerAcceptedCount = registeredFiles.size;
+            resetInteractiveManifestState();
             rerenderPanels();
             return manifest;
         },
@@ -767,11 +830,27 @@ export function createInternalMmeCompatManifestPlugin(
             }
 
             registeredFiles.set(normalizedFile.path, normalizedFile);
-            const selectedRootFile = selectRegisteredRootFile(Array.from(registeredFiles.values()));
-            manifest = selectedRootFile
-                ? createMmeManifest(selectedRootFile, Array.from(registeredFiles.values()))
-                : null;
-            lastPickerAcceptedCount = registeredFiles.size;
+            rebuildManifestFromRegisteredFiles();
+            rerenderPanels();
+            return {
+                ok: true,
+                manifest,
+            };
+        },
+        removeMmeFile(path: string): MmeFileRemovalResult {
+            const normalizedPath = normalizeMmePath(path);
+            if (!registeredFiles.has(normalizedPath)) {
+                return {
+                    ok: false,
+                    manifest,
+                    reason: "file-not-registered",
+                };
+            }
+
+            registeredFiles.delete(normalizedPath);
+            lastPickerWarnings = [];
+            resetInteractiveManifestState();
+            rebuildManifestFromRegisteredFiles();
             rerenderPanels();
             return {
                 ok: true,
