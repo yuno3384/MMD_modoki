@@ -1,16 +1,16 @@
 # MME / Plugin Scaffold Status 2026-05-01
 
-この文書は `feature/plugin-effect-api` ブランチ上の MME / plugin scaffold 現状メモです。
-ファイル名は `2026-05-01` のままですが、内容は 2026-05-05 時点の実装状況まで更新している living memo として扱います。
+この文書は `feature/plugin-effect-api` 上の MME / plugin scaffold の状態メモです。
+ファイル名は `2026-05-01` のままですが、内容は 2026-05-06 時点まで更新している living memo として扱います。
 
 ## PR Summary
 
-このブランチでは、`MMD_modoki` に対して以下の 2 系統を追加しています。
+このブランチでは `MMD_modoki` に以下を追加しています。
 
 - read-only plugin / effect scaffold
 - experimental MME compatibility pipeline
 
-目的は、一般的な MME 描画互換を完成させることではなく、拡張境界と dry-run 中心の調査導線を reviewable な形で整えることです。
+目的は、一般的な MME 再現を宣言することではなく、reviewable な拡張境界と安全な調査導線を先に整えることです。
 
 ## Implemented
 
@@ -49,24 +49,28 @@
 - guarded debug highlight via reusable `HighlightLayer`
   - selected precise/highlightable candidate only
   - `multi-global-effect` and `unmatched` stay blocked
-  - same controller / same scene では `HighlightLayer` を再利用
+  - the same controller / scene reuses one `HighlightLayer`
 - MME file picker entry point
 - dry-run preview toggle
 
 ### Guarded Apply / Revert Debug UI
 
 - guarded Apply / Revert debug UI
-- apply は controller API 経由のみ
-- apply は experimental / debug-only
-- apply は `basicToon` のみ
-- apply は `matchingPolicy === "single-global-effect"` のみ
-- duplicate mesh target は block
-- revert は original material を復元
-- revert は owned fallback material を disposal helper 経由で破棄
+- read-only Apply Plan Targets preview
+  - shows planned owner / mesh / material / original material availability
+  - shows planned fallback preset / matching policy / effect id
+  - shows current apply availability reason when no plan exists
+- apply routes through controller APIs only
+- apply is experimental / debug-only
+- apply is limited to `basicToon`
+- apply requires `matchingPolicy === "single-global-effect"`
+- duplicate mesh targets are blocked
+- revert restores the original material
+- revert disposes the owned fallback material through the shared disposal helper
 
 ## NOT IMPLEMENTED
 
-現時点で intentionally 未実装:
+意図的に未実装の範囲:
 
 - `textureToon` apply
 - `emissiveLite` apply
@@ -79,33 +83,37 @@
 - multipass / render-target-heavy effect support
 - Ray-MMD rendering
 - broad renderer pipeline integration
-- no production/high-fidelity highlight system
-- no camera jump / focus to target
-- no material-based highlight effect
+- production/high-fidelity highlight system
+- camera jump / focus-to-target workflow
+- material-based highlight effect
 
-この scaffold は full MME support でも Ray-MMD support でもありません。rendering parity も主張しません。
+これは full MME support でも Ray-MMD support でもなく、rendering parity も主張しません。
 
 ## Safety Guarantees
 
 ### Preview / Debug
 
-- preview は dry-run
-- candidate view は read-only
+- preview is dry-run
+- candidate view is read-only
 - `textureToon` preview is diagnostics-only
 - weak candidate-only / unresolved texture evidence does not recommend `textureToon`
-- resolved texture evidence may produce preview guidance only
-- guarded debug highlight exists, but remains debug-only and non-destructive
-- preview / candidate / highlight は scene / material / mesh / camera を mutate しない
-- highlight は `mesh.material` を変更しない
-- highlight は material color / property を変更しない
-- highlight は camera を動かさない
-- highlight は apply / revert を trigger しない
-- `clearHighlight()`, preview disable, manifest clear, controller dispose で highlight state は安全に cleanup される
+- resolved texture evidence may improve preview guidance only
+- guarded debug highlight is debug-only and non-destructive
+- preview / candidate / highlight paths do not mutate scene / material / mesh / camera
+- highlight does not mutate `mesh.material`
+- highlight does not modify material colors / properties
+- highlight does not move the camera
+- highlight does not trigger apply / revert
+- `clearHighlight()`, preview disable, manifest clear, and controller dispose clean up highlight state
 
 ### Apply
 
-apply は controller 側で明示ガードされ、UI 条件とは別に再検証されます。
+apply は controller guard を通る safety experiment に限定しています。
 
+- Apply Plan Targets does not create materials
+- Apply Plan Targets does not mutate scene / material / mesh state
+- Apply Plan Targets does not trigger apply / revert
+- Apply / Revert still route only through controller guards
 - controller enabled
 - `mode === "apply"`
 - `experimentalApplyEnabled === true`
@@ -187,10 +195,16 @@ UI から controller validation を bypass する path はありません。
 - Step 41: reusable `HighlightLayer` lifecycle cleanup
 - Step 42: documentation update for guarded debug highlight
 
-### Step 43-44
+### Step 43-48
 
 - Step 43: `textureToon` dry-run preview diagnostics
 - Step 44: conservative `textureToon` planning policy
+- Step 45: documented conservative `textureToon` preview-only policy
+  - `textureToon` remains non-apply-eligible
+  - weak / unresolved texture evidence remains diagnostic / warning-only
+- Step 46: human-readable texture preview summary
+- Step 47: structured texture preview cards / rows
+- Step 48: read-only Apply Plan Targets preview
 
 ## Current Experimental Apply Scope
 
@@ -202,11 +216,11 @@ UI から controller validation を bypass する path はありません。
 - `basicToon` only
 - `single-global-effect` only
 
-一般的な MME fallback apply や arbitrary `.fx` の反映を意味しません。
+任意の `.fx` をそのまま適用する仕組みではありません。
 
 ## Validation Status
 
-2026-05-05 時点の確認:
+2026-05-06 時点:
 
 - `npm.cmd run lint`
   - success
@@ -215,18 +229,20 @@ UI から controller validation を bypass する path はありません。
   - fail
   - 既存の repo-wide TypeScript errors によるもの
 - targeted `Vitest`
-  - この sandbox 環境では `spawn EPERM`
+  - この sandbox では `spawn EPERM`
 
 ## Next Steps
 
-- Step 43: apply plan target list の read-only subview
-- target-to-effect association precision の改善
-- `textureToon` を同じ gate の下で試すかどうか再評価
-- Ray-MMD は別トラックを作らない限り unsupported のまま維持
+- add original-material vs fallback-material diff summary before guarded apply
+- polish Apply Plan Targets UI field labels and target/effect wording
+- add DOM test coverage for Apply Plan Targets
+- improve target-to-effect association precision
+- decide whether `textureToon` is safe to prototype behind the same gate
+- keep Ray-MMD explicitly unsupported unless a separate design/validation track is created
 
 ## Non-goals
 
-この scaffold は以下をまだ提供しません。
+この scaffold が直接目指していないもの:
 
 - general MME rendering compatibility
 - arbitrary `.fx` application
@@ -260,6 +276,7 @@ The goal is to create reviewable extension points and a safe investigation path 
 - added a read-only candidate view with filter/sort/selection/detail/highlight-plan scaffolding
 - added guarded, non-destructive debug candidate highlighting through a reusable `HighlightLayer`
 - added guarded debug-panel Apply/Revert wiring for a very limited fallback path
+- added a read-only Apply Plan Targets preview before guarded apply
 
 #### Safety boundaries
 
@@ -314,7 +331,9 @@ The goal is to create reviewable extension points and a safe investigation path 
 
 #### Next steps
 
-- add a read-only apply-plan target list in the debug panel before broader apply work
+- add original-material vs fallback-material diff summary before guarded apply
+- polish Apply Plan Targets UI field labels and target/effect wording
+- add DOM test coverage for Apply Plan Targets
 - improve target-to-effect association precision
 - decide whether `textureToon` is safe to prototype behind the same gate
 - keep Ray-MMD explicitly unsupported unless a separate design/validation track is created
