@@ -154,12 +154,22 @@ export function createInternalMmeCompatManifestPlugin(
     };
 
     const renderPanel = (container: HTMLElement): void => {
+        container.style.display = "flex";
+        container.style.flexDirection = "column";
+        container.style.minHeight = "0";
+        container.style.maxHeight = "min(60vh, 520px)";
+        container.style.overflow = "hidden";
         container.replaceChildren();
 
         const summary = document.createElement("div");
         summary.style.display = "grid";
         summary.style.gap = "6px";
         summary.style.fontSize = "12px";
+        summary.style.flex = "1 1 auto";
+        summary.style.minHeight = "0";
+        summary.style.overflowY = "auto";
+        summary.style.overflowX = "hidden";
+        summary.style.paddingRight = "4px";
 
         const pickerSection = document.createElement("div");
         pickerSection.style.display = "grid";
