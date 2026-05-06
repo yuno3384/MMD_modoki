@@ -206,6 +206,12 @@ UI から controller validation を bypass する path はありません。
 - Step 47: structured texture preview cards / rows
 - Step 48: read-only Apply Plan Targets preview
 
+### Step 49-50
+
+- Step 49: documentation update for Apply Plan Targets preview
+- Step 50: runtime Apply Plan Targets wording cleanup
+  - uses `effect id` wording instead of ambiguous `target`
+
 ## Current Experimental Apply Scope
 
 現在の apply は strictly limited な safety experiment です。
@@ -277,6 +283,7 @@ The goal is to create reviewable extension points and a safe investigation path 
 - added guarded, non-destructive debug candidate highlighting through a reusable `HighlightLayer`
 - added guarded debug-panel Apply/Revert wiring for a very limited fallback path
 - added a read-only Apply Plan Targets preview before guarded apply
+  - uses `effect id` wording in the runtime panel
 
 #### Safety boundaries
 
@@ -311,6 +318,7 @@ The goal is to create reviewable extension points and a safe investigation path 
 - no general material replacement pipeline
 - no `textureToon`, `emissiveLite`, or `katameLike` apply path
 - no `textureToon` apply eligibility
+- `basicToon` is the only experimental apply path
 - no arbitrary shader execution
 - no production/high-fidelity highlight system
 - no camera focus/jump-to-target workflow
