@@ -15,6 +15,11 @@ import {
 import { planMmeFallbackPreset, type MmeFallbackPlan } from "./mme-fallback-preset-planner";
 import type { MMEManifest } from "./mme-compat-manifest";
 import type { MMEEffectIR } from "./mme-fx-parser";
+import {
+    validateMmeTextureCandidate,
+    type MmeTextureValidationContext,
+    type MmeTextureValidationResult,
+} from "./mme-texture-asset-validator";
 
 export type MmeFallbackControllerMode = "preview" | "apply";
 
@@ -48,6 +53,18 @@ export type MmeFallbackPreviewPlanItem = {
     readonly warnings: readonly string[];
     readonly analysis: MmeEffectAnalysis;
     readonly fallbackPlan: MmeFallbackPlan;
+    readonly textureReadiness: MmeFallbackTextureReadinessMetadata;
+};
+
+export type MmeFallbackTextureReadinessMetadata = {
+    readonly diffuseTexture: MmeTextureValidationResult;
+    readonly toonRamp: MmeTextureValidationResult;
+    readonly sphereMap: MmeTextureValidationResult;
+};
+
+export type MmeFallbackPlanningContext = {
+    readonly manifest?: Pick<MMEManifest, "textureCandidates">;
+    readonly textureValidation?: MmeTextureValidationContext;
 };
 
 export type MmeFallbackControllerState = {
@@ -228,7 +245,7 @@ export class MmeFallbackController {
 
     public buildPreviewPlan(
         inputs: readonly MmeFallbackPreviewInput[],
-        context?: { manifest?: Pick<MMEManifest, "textureCandidates"> },
+        context?: MmeFallbackPlanningContext,
     ): readonly MmeFallbackPreviewPlanItem[] {
         this.disposeOwnedFactoryResults();
 
@@ -460,7 +477,7 @@ export class MmeFallbackController {
 
     public planApply(
         inputs: readonly MmeFallbackPreviewInput[],
-        context?: { manifest?: Pick<MMEManifest, "textureCandidates"> },
+        context?: MmeFallbackPlanningContext,
     ): MmeFallbackApplyTransaction | null {
         const previewPlan = this.buildPlannedTargets(inputs, context);
         if (previewPlan.length === 0) {
@@ -753,13 +770,14 @@ export class MmeFallbackController {
 
     private buildPlannedTargets(
         inputs: readonly MmeFallbackPreviewInput[],
-        context?: { manifest?: Pick<MMEManifest, "textureCandidates"> },
+        context?: MmeFallbackPlanningContext,
     ): MmeFallbackPreviewPlanItem[] {
         const previewItems: MmeFallbackPreviewPlanItem[] = [];
 
         for (const input of inputs) {
             const analysis: MmeEffectAnalysis = analyzeMmeEffectIR(input.effect, context);
             const plan = planMmeFallbackPreset(analysis, input.effect, context);
+            const textureReadiness = buildTextureReadinessMetadata(analysis, context?.textureValidation);
             const factoryResult = createMmeFallbackMaterial({
                 scene: input.scene ?? null,
                 plan,
@@ -789,6 +807,7 @@ export class MmeFallbackController {
                 warnings: [...plan.warnings, ...factoryResult.warnings],
                 analysis,
                 fallbackPlan: plan,
+                textureReadiness,
             });
         }
 
@@ -843,6 +862,17 @@ export class MmeFallbackController {
             disposeMmeFallbackMaterial(allocation.result);
         }
     }
+}
+
+function buildTextureReadinessMetadata(
+    analysis: MmeEffectAnalysis,
+    context: MmeTextureValidationContext | undefined,
+): MmeFallbackTextureReadinessMetadata {
+    return {
+        diffuseTexture: validateMmeTextureCandidate(analysis.mappedFields.diffuseTexture, context),
+        toonRamp: validateMmeTextureCandidate(analysis.mappedFields.toonRamp, context),
+        sphereMap: validateMmeTextureCandidate(analysis.mappedFields.sphereMap, context),
+    };
 }
 
 export function buildHighlightPlanForCandidate(

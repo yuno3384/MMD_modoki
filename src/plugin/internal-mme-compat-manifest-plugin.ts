@@ -8,6 +8,7 @@ import {
     type MmeFallbackControllerState,
     type MmeFallbackHighlightPlan,
     type MmeFallbackPreviewPlanItem,
+    type MmeFallbackTextureReadinessMetadata,
     type MmeFallbackTargetCandidate,
 } from "./mme-fallback-controller";
 import {
@@ -89,6 +90,7 @@ export type MmeCompatApplyPlanRow = {
     readonly plannedFallbackPreset: string;
     readonly matchingPolicy: string | null;
     readonly validationReason: string | null;
+    readonly textureReadiness: MmeFallbackTextureReadinessMetadata | null;
 };
 
 export type InternalMmeCompatManifestPlugin = ScenePlugin & {
@@ -297,6 +299,12 @@ export function createInternalMmeCompatManifestPlugin(
         const applyGateStatus = fallbackController.getApplyGateStatus();
         const currentApplyPlan = fallbackController.getApplyPlan();
         const sceneMaterialTargets = options.getSceneMaterialTargets?.() ?? [];
+        const planningContext = {
+            manifest,
+            textureValidation: {
+                files: Array.from(registeredFiles.values()),
+            },
+        };
         appendSummaryRow(summary, "Fallback Preview", controllerState.enabled ? "ON" : "OFF");
         appendSummaryRow(summary, "Fallback Mode", controllerState.mode);
         appendSummaryRow(summary, "Preview Targets", String(controllerState.plannedTargets.length));
@@ -386,12 +394,12 @@ export function createInternalMmeCompatManifestPlugin(
             summary.appendChild(previewNotice);
 
             if (controllerState.enabled) {
-                const previewPlan = fallbackController.buildPreviewPlan(buildPreviewInputsFromManifest(manifest), { manifest });
+                const previewPlan = fallbackController.buildPreviewPlan(buildPreviewInputsFromManifest(manifest), planningContext);
                 const targetCandidates = fallbackController.buildTargetCandidateView(sceneMaterialTargets, previewPlan);
                 const applyInputs = buildApplyInputsFromTargetsAndPreviewPlan(sceneMaterialTargets, previewPlan, manifest);
                 const applyPlan = currentApplyPlan?.status === "applied"
                     ? currentApplyPlan
-                    : fallbackController.planApply(applyInputs, { manifest });
+                    : fallbackController.planApply(applyInputs, planningContext);
                 const applyAvailability = fallbackController.getApplyAvailability();
                 const revertEnabled = applyPlan?.status === "applied";
                 appendSummaryRow(summary, "Apply Status", getMmeCompatApplyStatus(controllerState, applyAvailability));
@@ -415,6 +423,7 @@ export function createInternalMmeCompatManifestPlugin(
                     fallbackMaterialStatus: entry.factoryStatus,
                     mappedFields: entry.mappedFields,
                     textureCandidates: summarizeMappedTextureCandidates(entry.mappedFields),
+                    textureReadiness: entry.textureReadiness,
                     unsupportedFeatures: entry.blockedByUnsupportedFeatures,
                     warnings: entry.warnings,
                 })), null, 2);
@@ -1016,19 +1025,28 @@ export function buildMmeCompatApplyPlanRows(
         plannedFallbackPreset: record.plannedFallback.preset,
         matchingPolicy: record.matchingPolicy,
         validationReason,
+        textureReadiness: record.plannedFallback.textureReadiness,
     }));
 }
 
 export function formatMmeCompatApplyPlanRowLines(
     row: MmeCompatApplyPlanRow,
 ): readonly string[] {
-    return [
+    const lines = [
         `effect id: ${row.targetId}`,
         `original material: ${row.originalMaterialAvailability}`,
         `preset: ${row.plannedFallbackPreset}`,
         `matching: ${row.matchingPolicy ?? "(unknown)"}`,
         `validation: ${row.validationReason ?? "ready"}`,
     ];
+    if (row.plannedFallbackPreset === "textureToon" && row.textureReadiness) {
+        lines.push(
+            `diffuse texture readiness: ${formatMmeTextureReadinessLine(row.textureReadiness.diffuseTexture)}`,
+            `toon ramp readiness: ${formatMmeTextureReadinessLine(row.textureReadiness.toonRamp)}`,
+            `sphere/matcap readiness: ${formatMmeTextureReadinessLine(row.textureReadiness.sphereMap)}`,
+        );
+    }
+    return lines;
 }
 
 export function filterAndSortMmeTargetCandidates(
@@ -1200,6 +1218,7 @@ type MmeTexturePreviewSummaryEntry = {
     readonly status: "resolved" | "candidate-only" | "none";
     readonly reference: string | null;
     readonly resolvedPath: string | null;
+    readonly validation?: MmeFallbackTextureReadinessMetadata[keyof MmeFallbackTextureReadinessMetadata] | null;
 };
 
 export function buildMmeTexturePreviewSummaryEntries(
@@ -1209,9 +1228,22 @@ export function buildMmeTexturePreviewSummaryEntries(
     const candidateByType = new Map(summarizedCandidates.map((candidate) => [candidate.type, candidate]));
 
     return [
-        buildMmeTexturePreviewSummaryEntry("Diffuse", candidateByType.get("diffuseTexture")),
-        buildMmeTexturePreviewSummaryEntry("Toon", candidateByType.get("toonRamp")),
-        buildMmeTexturePreviewSummaryEntry("Sphere", candidateByType.get("sphereMap")),
+        buildMmeTexturePreviewSummaryEntry("Diffuse", candidateByType.get("diffuseTexture"), null),
+        buildMmeTexturePreviewSummaryEntry("Toon", candidateByType.get("toonRamp"), null),
+        buildMmeTexturePreviewSummaryEntry("Sphere", candidateByType.get("sphereMap"), null),
+    ];
+}
+
+function buildMmeTexturePreviewSummaryEntriesForPlan(
+    entry: MmeFallbackPreviewPlanItem,
+): readonly MmeTexturePreviewSummaryEntry[] {
+    const summarizedCandidates = summarizeMappedTextureCandidates(entry.mappedFields);
+    const candidateByType = new Map(summarizedCandidates.map((candidate) => [candidate.type, candidate]));
+
+    return [
+        buildMmeTexturePreviewSummaryEntry("Diffuse", candidateByType.get("diffuseTexture"), entry.textureReadiness.diffuseTexture),
+        buildMmeTexturePreviewSummaryEntry("Toon", candidateByType.get("toonRamp"), entry.textureReadiness.toonRamp),
+        buildMmeTexturePreviewSummaryEntry("Sphere", candidateByType.get("sphereMap"), entry.textureReadiness.sphereMap),
     ];
 }
 
@@ -1252,7 +1284,7 @@ function createMmeTexturePreviewSummaryCards(
         effectTitle.style.fontWeight = "600";
         effectCard.appendChild(effectTitle);
 
-        for (const textureEntry of buildMmeTexturePreviewSummaryEntries(entry.mappedFields)) {
+        for (const textureEntry of buildMmeTexturePreviewSummaryEntriesForPlan(entry)) {
             effectCard.appendChild(createMmeTexturePreviewSummaryRow(textureEntry));
         }
 
@@ -1313,26 +1345,29 @@ function createMmeCompatApplyPlanView(
 function buildMmeTexturePreviewSummaryEntry(
     label: MmeTexturePreviewSummaryEntry["label"],
     candidate: ReturnType<typeof summarizeMappedTextureCandidates>[number] | undefined,
+    validation: MmeTexturePreviewSummaryEntry["validation"],
 ): MmeTexturePreviewSummaryEntry {
     if (!candidate) {
-        return {
+        const entry: MmeTexturePreviewSummaryEntry = {
             label,
             status: "none",
             reference: null,
             resolvedPath: null,
         };
+        return validation ? { ...entry, validation } : entry;
     }
 
     const status = candidate.status === "resolved" || candidate.status === "candidate-only"
         ? candidate.status
         : "none";
 
-    return {
+    const entry: MmeTexturePreviewSummaryEntry = {
         label,
         status,
         reference: candidate.reference,
         resolvedPath: candidate.resolvedPath,
     };
+    return validation ? { ...entry, validation } : entry;
 }
 
 function createMmeTexturePreviewSummaryRow(entry: MmeTexturePreviewSummaryEntry): HTMLElement {
@@ -1382,6 +1417,16 @@ function createMmeTexturePreviewSummaryRow(entry: MmeTexturePreviewSummaryEntry)
         row.appendChild(unresolved);
     }
 
+    if (entry.validation) {
+        for (const line of formatMmeTextureReadinessDetailLines(entry.validation)) {
+            const detail = document.createElement("div");
+            detail.textContent = line;
+            detail.style.fontSize = "12px";
+            detail.style.opacity = "0.72";
+            row.appendChild(detail);
+        }
+    }
+
     return row;
 }
 
@@ -1392,7 +1437,31 @@ function formatMmeTexturePreviewSummaryEntry(entry: MmeTexturePreviewSummaryEntr
 
     const displayReference = entry.reference ?? "(unknown reference)";
     const displayPath = entry.resolvedPath ?? "(unresolved)";
-    return `${entry.label}: ${entry.status} (${displayReference})\n  ref: "${displayReference}"\n  path: ${displayPath}`;
+    const validation = entry.validation
+        ? `\n  readiness: ${formatMmeTextureReadinessLine(entry.validation)}`
+        : "";
+    return `${entry.label}: ${entry.status} (${displayReference})\n  ref: "${displayReference}"\n  path: ${displayPath}${validation}`;
+}
+
+function formatMmeTextureReadinessLine(
+    result: MmeTexturePreviewSummaryEntry["validation"],
+): string {
+    if (!result) return "unavailable";
+    return `${result.status}; ref=${result.reference ?? "(none)"}; path=${result.resolvedPath ?? "(unresolved)"}; ext=${result.extension ?? "(none)"}; reason=${result.reason}`;
+}
+
+function formatMmeTextureReadinessDetailLines(
+    result: NonNullable<MmeTexturePreviewSummaryEntry["validation"]>,
+): readonly string[] {
+    const lines = [
+        `readiness: ${result.status}`,
+        `extension: ${result.extension ?? "(none)"}`,
+        `reason: ${result.reason}`,
+    ];
+    if (result.warnings.length > 0) {
+        lines.push(`warnings: ${result.warnings.join("; ")}`);
+    }
+    return lines;
 }
 
 function compareMmeTargetCandidates(

@@ -113,6 +113,7 @@ describe("InternalMmeCompatManifestPlugin", () => {
                         blockedByUnsupportedFeatures: [],
                         factoryStatus: "created",
                         warnings: [],
+                        textureReadiness: createTextureReadinessFixture(),
                         analysis: {
                             status: "partiallyMapped",
                             confidence: 0.8,
@@ -162,6 +163,7 @@ describe("InternalMmeCompatManifestPlugin", () => {
                 plannedFallbackPreset: "basicToon",
                 matchingPolicy: "single-global-effect",
                 validationReason: "scene-unavailable",
+                textureReadiness: createTextureReadinessFixture(),
             },
         ]);
     });
@@ -184,6 +186,7 @@ describe("InternalMmeCompatManifestPlugin", () => {
             plannedFallbackPreset: "basicToon",
             matchingPolicy: "single-global-effect",
             validationReason: null,
+            textureReadiness: null,
         } as const;
 
         const lines = formatMmeCompatApplyPlanRowLines(row);
@@ -752,4 +755,21 @@ function createCandidateFixtures(): MmeFallbackTargetCandidate[] {
             matchingPolicy: "unmatched",
         },
     ];
+}
+
+function createTextureReadinessFixture() {
+    const unresolved = {
+        status: "unresolved" as const,
+        reference: null,
+        resolvedPath: null,
+        extension: null,
+        reason: "texture-candidate-missing",
+        warnings: [],
+    };
+
+    return {
+        diffuseTexture: unresolved,
+        toonRamp: unresolved,
+        sphereMap: unresolved,
+    };
 }

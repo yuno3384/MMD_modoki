@@ -94,6 +94,8 @@ Each step should keep `textureToon` disabled for real apply until the required o
 
 Step 2 adds `src/plugin/mme-texture-asset-validator.ts` as a dry-run texture candidate validator. It checks resolved texture candidates against supported image extensions and optional registered-file context, returning `valid`, `missing`, `unsupported-extension`, `unresolved`, `ambiguous`, or `failed`. It does not allocate Babylon `Texture` instances, assign textures to materials, or make `textureToon` apply-eligible.
 
+Step 3 threads those dry-run validation results into `textureToon` preview and apply-plan diagnostics. The debug UI can show texture readiness status, reference, resolved path, extension, reason, and warnings, but `textureToon` remains non-apply-eligible.
+
 ## Non-goals
 
 - No arbitrary `.fx` rendering.

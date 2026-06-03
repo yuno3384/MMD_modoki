@@ -69,9 +69,9 @@ export function planMmeFallbackPreset(
     const hasToonRamp = fields.toonRamp !== null;
     const hasSpecular = fields.specularColor !== null || fields.specularIntensity !== null;
     const hasEmissive = fields.emissiveColor !== null || fields.emissiveTexture !== null;
-    const hasResolvedDiffuseTexture = fields.diffuseTexture?.resolvedPath !== null;
-    const hasResolvedToonRamp = fields.toonRamp?.resolvedPath !== null;
-    const hasResolvedSphereMap = fields.sphereMap?.resolvedPath !== null;
+    const hasResolvedDiffuseTexture = fields.diffuseTexture?.status === "resolved" && fields.diffuseTexture.resolvedPath != null;
+    const hasResolvedToonRamp = fields.toonRamp?.status === "resolved" && fields.toonRamp.resolvedPath != null;
+    const hasResolvedSphereMap = fields.sphereMap?.status === "resolved" && fields.sphereMap.resolvedPath != null;
     const hasStrongTextureToonEvidence = hasResolvedDiffuseTexture || hasResolvedToonRamp;
     const hasStrongKatameEvidence = hasResolvedToonRamp || hasResolvedSphereMap || hasSpecular;
 
@@ -86,27 +86,6 @@ export function planMmeFallbackPreset(
             requiredFields: ["emissiveColor or emissiveTexture"],
             optionalFields: ["diffuseColor", "diffuseTexture"],
             missingFields: [],
-            blockedByUnsupportedFeatures,
-            warnings,
-        };
-    }
-
-    if (hasStrongKatameEvidence && !isShaderDependent(effect)) {
-        const missingFields = [];
-        if (!hasResolvedToonRamp && !hasResolvedSphereMap) {
-            missingFields.push("toonRamp or sphereMap");
-        }
-
-        return {
-            preset: "katameLike",
-            confidence: hasResolvedToonRamp || hasResolvedSphereMap ? 0.78 : 0.62,
-            reasons: [
-                "Toon ramp, sphere/matcap, or strong specular-like fields were detected",
-                "No custom shader dependency or complex render target flow was detected",
-            ],
-            requiredFields: ["toonRamp or sphereMap or strong specular-like fields"],
-            optionalFields: ["diffuseTexture", "diffuseColor", "specularIntensity"],
-            missingFields,
             blockedByUnsupportedFeatures,
             warnings,
         };
@@ -142,6 +121,27 @@ export function planMmeFallbackPreset(
 
         warnings.push("Texture-only evidence remained weak or unresolved, so textureToon was not recommended conservatively");
         textureToonRejectedForWeakEvidence = true;
+    }
+
+    if (hasStrongKatameEvidence && !isShaderDependent(effect)) {
+        const missingFields = [];
+        if (!hasResolvedToonRamp && !hasResolvedSphereMap) {
+            missingFields.push("toonRamp or sphereMap");
+        }
+
+        return {
+            preset: "katameLike",
+            confidence: hasResolvedToonRamp || hasResolvedSphereMap ? 0.78 : 0.62,
+            reasons: [
+                "Toon ramp, sphere/matcap, or strong specular-like fields were detected",
+                "No custom shader dependency or complex render target flow was detected",
+            ],
+            requiredFields: ["toonRamp or sphereMap or strong specular-like fields"],
+            optionalFields: ["diffuseTexture", "diffuseColor", "specularIntensity"],
+            missingFields,
+            blockedByUnsupportedFeatures,
+            warnings,
+        };
     }
 
     if (hasDiffuseColor && blockedByUnsupportedFeatures.length === 0) {
