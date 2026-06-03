@@ -12,6 +12,10 @@ import { Material } from "@babylonjs/core/Materials/material";
 import { MultiMaterial } from "@babylonjs/core/Materials/multiMaterial";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { MmdManager } from "./mmd-manager";
+import {
+    collectAccessoryMaterialTargets as collectPluginAccessoryMaterialTargets,
+    type AccessoryMaterialEffectTarget,
+} from "./plugin/material-targets";
 import { applyWgslShaderPresetToMaterials } from "./scene/material-shader-service";
 import { loadXIntoScene } from "./x-file-loader";
 import type { ProjectSerializedAccessoryTransformTrack } from "./types";
@@ -63,6 +67,7 @@ declare module "./mmd-manager" {
         setAccessoryTransformKeyframes(index: number, track: ProjectSerializedAccessoryTransformTrack | null): boolean;
         getModelBoneNames(modelIndex: number): string[];
         getAccessoryMeshes(): AbstractMesh[];
+        getAccessoryMaterialTargets(): AccessoryMaterialEffectTarget[];
     }
 }
 
@@ -71,6 +76,18 @@ type XLoadHost = {
     shadowGenerator: Pick<ShadowGenerator, "addShadowCaster" | "removeShadowCaster">;
     onError: ((message: string) => void) | null;
     applyToonShadowInfluenceToMeshes?: (meshes: Mesh[]) => void;
+    emitPluginAccessoryLoaded?: (context: {
+        accessoryIndex: number | null;
+        accessoryName: string | null;
+        accessoryPath: string | null;
+        accessoryKind: "x" | "glb" | null;
+        rootNode: TransformNode | AbstractMesh | null;
+        meshes: readonly AbstractMesh[];
+        materials: readonly {
+            material: Material;
+            meshNames: readonly string[];
+        }[];
+    }) => void;
     getLoadedModels?: () => ArrayLike<unknown>;
     setCameraTarget?: (x: number, y: number, z: number) => void;
     setCameraDistance?: (distance: number) => void;
@@ -1110,6 +1127,7 @@ const mmdManagerProto = MmdManager.prototype as unknown as {
     setAccessoryTransformKeyframes?: (index: number, track: ProjectSerializedAccessoryTransformTrack | null) => boolean;
     getModelBoneNames?: (modelIndex: number) => string[];
     getAccessoryMeshes?: () => AbstractMesh[];
+    getAccessoryMaterialTargets?: () => AccessoryMaterialEffectTarget[];
 };
 
 if (!mmdManagerProto.loadX) {
@@ -1140,6 +1158,36 @@ if (!mmdManagerProto.loadX) {
                 },
                 X_ACCESSORY_IMPORT_SCALE,
             );
+            const entry = getAccessoryEntries(host as XLoadHost & object).at(-1) ?? null;
+            const accessoryTargets = entry
+                ? collectPluginAccessoryMaterialTargets({
+                    accessoryIndex: getAccessoryEntries(host as XLoadHost & object).length - 1,
+                    accessoryName,
+                    accessoryKind: "x",
+                    sourcePath: filePath,
+                    rootNode: entry.root,
+                    meshes: entry.meshes,
+                })
+                : [];
+            const materialsByMaterial = new Map<object, { material: Material; meshNames: string[] }>();
+            for (const target of accessoryTargets) {
+                const key = target.material as object;
+                const current = materialsByMaterial.get(key) ?? { material: target.material, meshNames: [] };
+                current.meshNames.push(target.meshName);
+                materialsByMaterial.set(key, current);
+            }
+            host.emitPluginAccessoryLoaded?.({
+                accessoryIndex: entry ? getAccessoryEntries(host as XLoadHost & object).length - 1 : null,
+                accessoryName,
+                accessoryPath: filePath,
+                accessoryKind: "x",
+                rootNode: entry?.root ?? null,
+                meshes: entry?.meshes ?? [],
+                materials: Array.from(materialsByMaterial.values(), (value) => ({
+                    material: value.material,
+                    meshNames: value.meshNames,
+                })),
+            });
             host.applyToonShadowInfluenceToMeshes?.(result.meshes as Mesh[]);
 
             console.log("[X] Loaded:", fileName, "meshes:", result.meshes.length, "accessory:", accessoryName);
@@ -1191,6 +1239,36 @@ if (!mmdManagerProto.loadX) {
                 },
                 GLB_ACCESSORY_IMPORT_SCALE,
             );
+            const entry = getAccessoryEntries(host as XLoadHost & object).at(-1) ?? null;
+            const accessoryTargets = entry
+                ? collectPluginAccessoryMaterialTargets({
+                    accessoryIndex: getAccessoryEntries(host as XLoadHost & object).length - 1,
+                    accessoryName,
+                    accessoryKind: "glb",
+                    sourcePath: filePath,
+                    rootNode: entry.root,
+                    meshes: entry.meshes,
+                })
+                : [];
+            const materialsByMaterial = new Map<object, { material: Material; meshNames: string[] }>();
+            for (const target of accessoryTargets) {
+                const key = target.material as object;
+                const current = materialsByMaterial.get(key) ?? { material: target.material, meshNames: [] };
+                current.meshNames.push(target.meshName);
+                materialsByMaterial.set(key, current);
+            }
+            host.emitPluginAccessoryLoaded?.({
+                accessoryIndex: entry ? getAccessoryEntries(host as XLoadHost & object).length - 1 : null,
+                accessoryName,
+                accessoryPath: filePath,
+                accessoryKind: "glb",
+                rootNode: entry?.root ?? null,
+                meshes: entry?.meshes ?? [],
+                materials: Array.from(materialsByMaterial.values(), (value) => ({
+                    material: value.material,
+                    meshNames: value.meshNames,
+                })),
+            });
 
             console.log("[GLB] Loaded:", fileName, "meshes:", container.meshes.length, "accessory:", accessoryName);
             return true;
@@ -1220,6 +1298,20 @@ if (!mmdManagerProto.getAccessoryMeshes) {
     mmdManagerProto.getAccessoryMeshes = function(): AbstractMesh[] {
         const entries = getAccessoryEntries(this as unknown as object);
         return entries.flatMap((entry) => entry.meshes);
+    };
+}
+
+if (!mmdManagerProto.getAccessoryMaterialTargets) {
+    mmdManagerProto.getAccessoryMaterialTargets = function(): AccessoryMaterialEffectTarget[] {
+        const entries = getAccessoryEntries(this as unknown as object);
+        return entries.flatMap((entry, index) => collectPluginAccessoryMaterialTargets({
+            accessoryIndex: index,
+            accessoryName: entry.name,
+            accessoryKind: entry.kind,
+            sourcePath: entry.path,
+            rootNode: entry.root,
+            meshes: entry.meshes,
+        }));
     };
 }
 
