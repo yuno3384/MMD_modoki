@@ -102,7 +102,12 @@ export function parseMmeEffectFile(params: {
     const techniques: MMEEffectTechnique[] = [];
     const unknownSnippets: string[] = [];
 
-    const segments = splitTopLevelSegments(params.text);
+    const textWithoutIncludes = params.text.replace(/^\s*#include\s+"([^"\r\n]+)".*$/gim, (_match, includePath: string) => {
+        includes.push(includePath);
+        return "";
+    });
+
+    const segments = splitTopLevelSegments(textWithoutIncludes);
     for (const segment of segments) {
         const trimmed = segment.trim();
         if (!trimmed) continue;

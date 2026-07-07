@@ -16,7 +16,9 @@ import {
     collectAccessoryMaterialTargets as collectPluginAccessoryMaterialTargets,
     type AccessoryMaterialEffectTarget,
 } from "./plugin/material-targets";
+import { isDebugLogEnabled, logDebugIfEnabled, logError, logInfo, logWarn, toLogErrorData } from "./app-logger";
 import { applyWgslShaderPresetToMaterials } from "./scene/material-shader-service";
+import { stabilizeLargeThinLoadedMesh } from "./scene/mesh-render-stability";
 import { loadXIntoScene } from "./x-file-loader";
 import type { ProjectSerializedAccessoryTransformTrack } from "./types";
 import { copyProjectArrayToFloat32, copyProjectArrayToUint32, packFloat32Array, packFrameNumbers } from "./project/project-codec";
@@ -68,6 +70,7 @@ declare module "./mmd-manager" {
         getModelBoneNames(modelIndex: number): string[];
         getAccessoryMeshes(): AbstractMesh[];
         getAccessoryMaterialTargets(): AccessoryMaterialEffectTarget[];
+        getIblShadowAccessoryMeshes(): AbstractMesh[];
     }
 }
 
@@ -91,6 +94,7 @@ type XLoadHost = {
     getLoadedModels?: () => ArrayLike<unknown>;
     setCameraTarget?: (x: number, y: number, z: number) => void;
     setCameraDistance?: (distance: number) => void;
+    syncIblShadowsScene?: () => void;
 };
 
 type AccessoryEntry = {
@@ -121,10 +125,9 @@ const X_ACCESSORY_IMPORT_SCALE = 10;
 const GLB_ACCESSORY_IMPORT_SCALE = 25;
 const GLB_ACCESSORY_MIN_VISIBLE_SIZE = 60;
 const GLB_ACCESSORY_MAX_AUTO_SCALE = 400;
-const GLB_DEBUG_FORCE_NEON_MATERIAL = true;
-const GLB_DEBUG_SHOW_BOUNDING_BOX = true;
+const GLB_DEBUG_FORCE_NEON_MATERIAL = false;
+const GLB_DEBUG_SHOW_BOUNDING_BOX = false;
 const GLB_DEBUG_SHOW_EDGES = false;
-const GLB_DEBUG_DUMP_IMPORT = true;
 
 function getAccessoryEntries(host: object): AccessoryEntry[] {
     let entries = accessoryStore.get(host);
@@ -346,7 +349,8 @@ function createGlbReplacementMeshes(scene: Scene, offset: TransformNode, meshes:
         const positions = extracted?.positions ?? null;
         const indices = extracted?.indices ?? null;
         if (!positions || positions.length < 3 || !indices || indices.length === 0) {
-            console.warn("[GLB] Replacement skipped:", abstractMesh.name, {
+            logDebugIfEnabled("accessoryLoad", "asset", "glb replacement skipped", {
+                meshName: abstractMesh.name,
                 hasExtracted: Boolean(extracted),
                 positions: positions?.length ?? 0,
                 indices: indices?.length ?? 0,
@@ -397,8 +401,7 @@ function createGlbReplacementMeshes(scene: Scene, offset: TransformNode, meshes:
         replacement.skeleton = null;
 
         vertexData.applyToMesh(replacement, false);
-        replacement.computeWorldMatrix(true);
-        replacement.refreshBoundingInfo(true, true);
+        stabilizeLargeThinLoadedMesh(replacement);
         replacements.push(replacement);
     }
 
@@ -457,8 +460,7 @@ function prepareManagedAccessoryMeshes(host: XLoadHost, meshes: AbstractMesh[], 
         mesh.alwaysSelectAsActiveMesh = true;
         mesh.receiveShadows = true;
         mesh.showBoundingBox = GLB_DEBUG_SHOW_BOUNDING_BOX;
-        mesh.computeWorldMatrix(true);
-        mesh.refreshBoundingInfo(true, true);
+        stabilizeLargeThinLoadedMesh(mesh);
         normalizeAccessoryMaterialVisibility(mesh.material);
         if (GLB_DEBUG_SHOW_EDGES && mesh instanceof Mesh) {
             mesh.enableEdgesRendering();
@@ -640,7 +642,8 @@ function autoPlaceGlbAccessory(offset: TransformNode): void {
 
     const adjustedBounds = offset.getHierarchyBoundingVectors(true);
     const adjustedSize = adjustedBounds.max.subtract(adjustedBounds.min);
-    console.log("[GLB] Auto placed:", offset.name, {
+    logDebugIfEnabled("accessoryLoad", "asset", "glb accessory auto placed", {
+        accessoryName: offset.name,
         scale: offset.scaling.x,
         position: {
             x: offset.position.x,
@@ -669,7 +672,8 @@ function frameGlbAccessoryInCamera(host: XLoadHost, offset: TransformNode): void
     host.setCameraTarget(center.x, center.y, center.z);
     host.setCameraDistance(distance);
 
-    console.log("[GLB] Camera framed:", offset.name, {
+    logDebugIfEnabled("accessoryLoad", "asset", "glb accessory camera framed", {
+        accessoryName: offset.name,
         target: {
             x: center.x,
             y: center.y,
@@ -684,7 +688,7 @@ function logGlbImportDebug(
     result: { transformNodes: TransformNode[]; meshes: AbstractMesh[] },
     managedMeshes: readonly AbstractMesh[],
 ): void {
-    if (!GLB_DEBUG_DUMP_IMPORT) return;
+    if (!isDebugLogEnabled("accessoryLoad")) return;
 
     const managedMeshSet = new Set(managedMeshes);
     const meshRows = result.meshes.map((mesh) => {
@@ -726,16 +730,15 @@ function logGlbImportDebug(
         };
     });
 
-    console.groupCollapsed(`[GLB] Import debug: ${accessoryName}`);
-    console.table(meshRows);
-    if (transformRows.length > 0) console.table(transformRows);
-    console.log("[GLB] Import rows:", meshRows);
-    if (transformRows.length > 0) console.log("[GLB] Transform rows:", transformRows);
-    console.groupEnd();
+    logDebugIfEnabled("accessoryLoad", "asset", "GLB import debug rows", {
+        accessoryName,
+        meshRows,
+        transformRows,
+    });
 }
 
 function logGlbReplacementDebug(accessoryName: string, meshes: readonly AbstractMesh[]): void {
-    if (!GLB_DEBUG_DUMP_IMPORT) return;
+    if (!isDebugLogEnabled("accessoryLoad")) return;
     if (meshes.length === 0) return;
 
     const replacementRows = meshes.map((mesh) => {
@@ -758,10 +761,10 @@ function logGlbReplacementDebug(accessoryName: string, meshes: readonly Abstract
         };
     });
 
-    console.groupCollapsed(`[GLB] Replacement debug: ${accessoryName}`);
-    console.table(replacementRows);
-    console.log("[GLB] Replacement rows:", replacementRows);
-    console.groupEnd();
+    logDebugIfEnabled("accessoryLoad", "asset", "GLB replacement debug rows", {
+        accessoryName,
+        replacementRows,
+    });
 }
 
 function createAccessoryEntryFromImport(
@@ -787,17 +790,21 @@ function createAccessoryEntryFromImport(
         normalizeGlbAccessoryMaterials(host, managedMeshes);
     }
     if (kind === "glb" && managedMeshes.length === 0) {
-        console.warn("[GLB] No managed meshes matched render filter:", accessoryName, result.meshes.map((mesh) => ({
-            name: mesh.name,
-            className: typeof (mesh as { getClassName?: () => string }).getClassName === "function"
-                ? (mesh as { getClassName: () => string }).getClassName()
-                : "Unknown",
-            subMeshes: mesh.subMeshes?.length ?? 0,
-            vertexCount: getAccessoryRenderableVertexCount(mesh),
-            indexCount: getAccessoryRenderableIndexCount(mesh),
-            hasPositions: (mesh.getVerticesData?.(VertexBuffer.PositionKind)?.length ?? 0) > 0,
-            sourceMesh: (mesh as AbstractMesh & { sourceMesh?: Mesh | null }).sourceMesh?.name ?? null,
-        })));
+        logWarn("asset", "glb managed mesh filter matched no meshes", {
+            accessoryName,
+            meshCount: result.meshes.length,
+            meshes: result.meshes.map((mesh) => ({
+                name: mesh.name,
+                className: typeof (mesh as { getClassName?: () => string }).getClassName === "function"
+                    ? (mesh as { getClassName: () => string }).getClassName()
+                    : "Unknown",
+                subMeshes: mesh.subMeshes?.length ?? 0,
+                vertexCount: getAccessoryRenderableVertexCount(mesh),
+                indexCount: getAccessoryRenderableIndexCount(mesh),
+                hasPositions: (mesh.getVerticesData?.(VertexBuffer.PositionKind)?.length ?? 0) > 0,
+                sourceMesh: (mesh as AbstractMesh & { sourceMesh?: Mesh | null }).sourceMesh?.name ?? null,
+            })),
+        });
     }
     configureImportedAccessoryTransformNodes(result.transformNodes);
     if (kind === "glb") {
@@ -813,7 +820,11 @@ function createAccessoryEntryFromImport(
     prepareManagedAccessoryMeshes(host, managedMeshes, kind !== "glb");
     if (kind === "x") {
         const accessoryMaterials = collectAccessoryMaterials(managedMeshes);
-        applyWgslShaderPresetToMaterials(host as any, accessoryMaterials, "wgsl-accessory-toon");
+        applyWgslShaderPresetToMaterials(
+            host as Parameters<typeof applyWgslShaderPresetToMaterials>[0],
+            accessoryMaterials,
+            "wgsl-accessory-toon",
+        );
     }
     if (kind === "glb") {
         excludeGlbAccessoryMeshesFromDepthAndShadow(host, managedMeshes);
@@ -1101,6 +1112,14 @@ function setAccessoryVisible(entry: AccessoryEntry, visible: boolean): void {
     }
 }
 
+function isIblShadowAccessoryMeshCandidate(mesh: AbstractMesh): mesh is Mesh {
+    if (!(mesh instanceof Mesh)) return false;
+    if (mesh.isDisposed()) return false;
+    if (!mesh.isEnabled() || !mesh.isVisible) return false;
+    if ((mesh.getTotalVertices?.() ?? 0) <= 0) return false;
+    return true;
+}
+
 function toDegrees(rad: number): number {
     return rad * (180 / Math.PI);
 }
@@ -1128,6 +1147,7 @@ const mmdManagerProto = MmdManager.prototype as unknown as {
     getModelBoneNames?: (modelIndex: number) => string[];
     getAccessoryMeshes?: () => AbstractMesh[];
     getAccessoryMaterialTargets?: () => AccessoryMaterialEffectTarget[];
+    getIblShadowAccessoryMeshes?: () => AbstractMesh[];
 };
 
 if (!mmdManagerProto.loadX) {
@@ -1135,6 +1155,7 @@ if (!mmdManagerProto.loadX) {
         const host = this as unknown as XLoadHost;
         try {
             const { fileName, fileUrl } = splitFilePath(filePath);
+            logInfo("asset", "x accessory load started", { filePath, fileName });
             const data = await window.electronAPI.readBinaryFile(filePath);
             if (!data) {
                 throw new Error(`Unable to read X file: ${filePath}`);
@@ -1189,23 +1210,33 @@ if (!mmdManagerProto.loadX) {
                 })),
             });
             host.applyToonShadowInfluenceToMeshes?.(result.meshes as Mesh[]);
+            host.syncIblShadowsScene?.();
 
-            console.log("[X] Loaded:", fileName, "meshes:", result.meshes.length, "accessory:", accessoryName);
+            logInfo("asset", "x accessory load completed", {
+                filePath,
+                fileName,
+                accessoryName,
+                meshCount: result.meshes.length,
+            });
             return true;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            console.error("Failed to load X:", message);
+            logError("asset", "x accessory load failed", {
+                filePath,
+                ...toLogErrorData(err),
+            });
             host.onError?.(`X load error: ${message}`);
             return false;
         }
     };
 }
 
-    if (!mmdManagerProto.loadGlb) {
+if (!mmdManagerProto.loadGlb) {
     mmdManagerProto.loadGlb = async function(filePath: string): Promise<boolean> {
         const host = this as unknown as XLoadHost;
         try {
             const { fileName, fileUrl } = splitFilePath(filePath);
+            logInfo("asset", "glb accessory load started", { filePath, fileName });
             const container = await LoadAssetContainerAsync(fileName, host.scene, {
                 rootUrl: fileUrl,
                 pluginExtension: ".glb",
@@ -1269,12 +1300,23 @@ if (!mmdManagerProto.loadX) {
                     meshNames: value.meshNames,
                 })),
             });
+            host.syncIblShadowsScene?.();
 
-            console.log("[GLB] Loaded:", fileName, "meshes:", container.meshes.length, "accessory:", accessoryName);
+            logInfo("asset", "glb accessory load completed", {
+                filePath,
+                fileName,
+                accessoryName,
+                meshCount: container.meshes.length,
+                transformNodeCount: container.transformNodes.length,
+                animationGroupCount: container.animationGroups.length,
+            });
             return true;
         } catch (err: unknown) {
             const message = err instanceof Error ? err.message : String(err);
-            console.error("Failed to load GLB:", message);
+            logError("asset", "glb accessory load failed", {
+                filePath,
+                ...toLogErrorData(err),
+            });
             host.onError?.(`GLB load error: ${message}`);
             return false;
         }
@@ -1315,6 +1357,15 @@ if (!mmdManagerProto.getAccessoryMaterialTargets) {
     };
 }
 
+if (!mmdManagerProto.getIblShadowAccessoryMeshes) {
+    mmdManagerProto.getIblShadowAccessoryMeshes = function(): AbstractMesh[] {
+        const entries = getAccessoryEntries(this as unknown as object);
+        return entries
+            .filter((entry) => entry.kind === "x" && isAccessoryVisible(entry))
+            .flatMap((entry) => entry.meshes.filter(isIblShadowAccessoryMeshCandidate));
+    };
+}
+
 if (!mmdManagerProto.clearAccessories) {
     mmdManagerProto.clearAccessories = function(): void {
         const entries = getAccessoryEntries(this as unknown as object);
@@ -1322,6 +1373,7 @@ if (!mmdManagerProto.clearAccessories) {
             const entry = entries.pop();
             entry?.root.dispose(false);
         }
+        (this as unknown as XLoadHost).syncIblShadowsScene?.();
     };
 }
 
@@ -1331,6 +1383,7 @@ if (!mmdManagerProto.setAccessoryVisibility) {
         const entry = entries[index];
         if (!entry) return false;
         setAccessoryVisible(entry, visible);
+        (this as unknown as XLoadHost).syncIblShadowsScene?.();
         return isAccessoryVisible(entry);
     };
 }
@@ -1342,6 +1395,7 @@ if (!mmdManagerProto.toggleAccessoryVisibility) {
         if (!entry) return false;
         const next = !isAccessoryVisible(entry);
         setAccessoryVisible(entry, next);
+        (this as unknown as XLoadHost).syncIblShadowsScene?.();
         return next;
     };
 }
@@ -1353,6 +1407,7 @@ if (!mmdManagerProto.removeAccessory) {
         const [entry] = entries.splice(index, 1);
         if (!entry) return false;
         entry.root.dispose(false);
+        (this as unknown as XLoadHost).syncIblShadowsScene?.();
         return true;
     };
 }
@@ -1416,6 +1471,7 @@ if (!mmdManagerProto.setAccessoryTransform) {
         }
 
         entry.offset.computeWorldMatrix(true);
+        (this as unknown as XLoadHost).syncIblShadowsScene?.();
         return true;
     };
 }

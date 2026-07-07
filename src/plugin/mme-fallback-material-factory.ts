@@ -31,6 +31,27 @@ export function createMmeFallbackMaterial(params: {
     const materialName = buildFallbackMaterialName(params.plan.preset, params.targetMetadata);
     const warnings = [...params.plan.warnings];
 
+    if (params.plan.preset === "none" && params.analysis.mappedFields.diffuseTexture !== null) {
+        return {
+            status: "skipped",
+            preset: params.plan.preset,
+            materialName,
+            materialType: "StandardMaterial",
+            warnings: [...warnings, "textureToon fallback requires a resolved diffuse texture path for safe scaffold creation"],
+        };
+    }
+
+    if (params.plan.preset === "katameLike") {
+        warnings.push("katameLike fallback would require a custom shader-style material scaffold; not created in this step");
+        return {
+            status: "unsupported",
+            preset: params.plan.preset,
+            materialName,
+            materialType: "custom-shader-required",
+            warnings,
+        };
+    }
+
     if (params.plan.preset === "unsupported" || params.plan.preset === "none") {
         return {
             status: "unsupported",
@@ -59,17 +80,6 @@ export function createMmeFallbackMaterial(params: {
             preset: params.plan.preset,
             materialName,
             materialType: "none",
-            warnings,
-        };
-    }
-
-    if (params.plan.preset === "katameLike") {
-        warnings.push("katameLike fallback would require a custom shader-style material scaffold; not created in this step");
-        return {
-            status: "unsupported",
-            preset: params.plan.preset,
-            materialName,
-            materialType: "custom-shader-required",
             warnings,
         };
     }
@@ -234,7 +244,12 @@ function parseScalarValue(value: string | null): number | null {
 }
 
 function extractNumericComponents(value: string): number[] {
-    return Array.from(value.matchAll(/-?\d+(?:\.\d+)?/g))
+    const parenStart = value.indexOf("(");
+    const parenEnd = value.lastIndexOf(")");
+    const numericSource = parenStart >= 0 && parenEnd > parenStart
+        ? value.slice(parenStart + 1, parenEnd)
+        : value;
+    return Array.from(numericSource.matchAll(/-?\d+(?:\.\d+)?/g))
         .map((match) => Number(match[0]))
         .filter((numberValue) => Number.isFinite(numberValue));
 }

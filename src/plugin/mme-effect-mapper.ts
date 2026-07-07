@@ -157,7 +157,7 @@ function mapMaterialFields(
     effect: MMEEffectIR,
     context?: { manifest?: Pick<MMEManifest, "textureCandidates"> },
 ): { fields: MmeMappedMaterialFields; warnings: readonly string[] } {
-    const diffuseColor = findColorParameter(effect.parameters, ["diffuse", "albedo", "color", "basecolor"], ["DIFFUSE", "COLOR"]);
+    const diffuseColor = findColorParameter(effect.parameters, ["diffuse", "albedo", "basecolor"], ["DIFFUSE", "COLOR"]);
     const alpha = findScalarParameter(effect.parameters, ["alpha", "opacity", "transparency"], ["ALPHA"]);
     const specularColor = findColorParameter(effect.parameters, ["specular", "specularcolor"], ["SPECULAR"]);
     const specularIntensity = findScalarParameter(effect.parameters, ["specularpower", "shininess", "power", "specularintensity"], []);
@@ -346,7 +346,7 @@ function resolveTextureCandidate(
         };
     }
 
-    if (bestCandidate.score >= 4) {
+    if (bestCandidate.score >= 2) {
         return {
             reference: bestCandidate.entry.reference,
             resolvedPath: bestCandidate.entry.resolvedPath,
@@ -373,9 +373,11 @@ function scoreTextureCandidate(
     normalizedSemanticHints: readonly string[],
 ): number {
     const normalizedReference = reference.toLowerCase();
+    const lastSlash = normalizedReference.lastIndexOf("/");
+    const normalizedFileName = lastSlash >= 0 ? normalizedReference.slice(lastSlash + 1) : normalizedReference;
     let score = 0;
-    if (normalizedReference.includes(normalizedTextureName)) score += 4;
-    if (normalizedNameHints.some((hint) => normalizedReference.includes(hint))) score += 2;
+    if (normalizedFileName.includes(normalizedTextureName)) score += 4;
+    if (normalizedNameHints.some((hint) => normalizedFileName.includes(hint))) score += 2;
     if (normalizedSemanticHints.some((hint) => normalizedTextureSemantic.includes(hint))) score += 1;
     return score;
 }

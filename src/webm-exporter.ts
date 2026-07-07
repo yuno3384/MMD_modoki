@@ -579,6 +579,17 @@ export async function runWebmExportJob(
         mmdManager.setAutoRenderEnabled(false);
         mmdManager.seekTo(startFrame);
         mmdManager.setExternalPlaybackSimulationEnabled(true);
+        const restoredInitialPhysics = mmdManager.applyWebmInitialPhysicsState(request.initialPhysicsState);
+        if (request.initialPhysicsState && !restoredInitialPhysics) {
+            console.warn("[WebM] Initial physics snapshot was provided but could not be restored.");
+        }
+        if (captureMode !== "readpixels") {
+            updateStatus(callbacks, "Preparing post effects for WebM capture...", "initializing");
+            const postEffectReady = await mmdManager.waitForPostEffectBackendReadyForCapture();
+            if (!postEffectReady) {
+                throw new Error("FrameGraph post effects were not ready for WebM capture");
+            }
+        }
 
         const videoBitrate = estimateVideoBitrate(outputWidth, outputHeight, fps);
 
@@ -723,23 +734,29 @@ export async function runWebmExportJob(
         };
 
         const consumeQueue = async (): Promise<void> => {
-            while (!producerDone || queue.length > 0) {
-                if (fatalError) break;
-                const item = queue.shift();
-                if (!item) {
-                    await sleepMs(1);
-                    continue;
-                }
+            try {
+                while (!producerDone || queue.length > 0) {
+                    if (fatalError) break;
+                    const item = queue.shift();
+                    if (!item) {
+                        await sleepMs(1);
+                        continue;
+                    }
 
-                try {
-                    await videoSource.add(item.videoSample);
-                } finally {
-                    item.videoSample.close();
-                    item.release?.();
-                }
+                    try {
+                        await videoSource.add(item.videoSample);
+                    } finally {
+                        item.videoSample.close();
+                        item.release?.();
+                    }
 
-                encodedFrames += 1;
-                reportProgress(item.frame);
+                    encodedFrames += 1;
+                    reportProgress(item.frame);
+                }
+            } catch (error: unknown) {
+                fatalError = error instanceof Error
+                    ? error
+                    : new Error(`Failed to encode WebM frame: ${String(error)}`);
             }
         };
 
@@ -784,12 +801,20 @@ export async function runWebmExportJob(
                         startFrame + Math.round((outputFrameIndex * TIMELINE_FPS) / fps),
                     );
                     if (!playbackStarted) {
-                        mmdManager.renderOnce(0);
+                        if (captureMode === "readpixels") {
+                            mmdManager.renderOnce(0);
+                        } else {
+                            mmdManager.renderOnceForCapture(0);
+                        }
                         playbackStarted = true;
                     } else {
                         await exportRuntimeInternals.mmdRuntime.playAnimation();
 
-                        mmdManager.renderOnce(1000 / fps);
+                        if (captureMode === "readpixels") {
+                            mmdManager.renderOnce(1000 / fps);
+                        } else {
+                            mmdManager.renderOnceForCapture(1000 / fps);
+                        }
                         exportRuntimeInternals.mmdRuntime.pauseAnimation();
                     }
 
