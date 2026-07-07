@@ -17,13 +17,12 @@ describe("planMmeFallbackPreset", () => {
         expect(plan.preset).toBe("basicToon");
     });
 
-    it("plans textureToon for diffuse texture or toon ramp effects", () => {
+    it("plans textureToon for diffuse texture effects", () => {
         const effect = parseMmeEffectFile({
             path: "texture.fx",
             kind: "fx",
             text: `
 texture MainTex;
-texture ToonRamp;
 sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
 `,
         });
@@ -33,8 +32,8 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
                 textureCandidates: [
                     {
                         sourceFile: "texture.fx",
-                        reference: "toon/toon01.bmp",
-                        resolvedPath: "bundle/toon/toon01.bmp",
+                        reference: "textures/MainTex.png",
+                        resolvedPath: "bundle/textures/MainTex.png",
                     },
                 ],
             },

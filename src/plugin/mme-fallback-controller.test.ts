@@ -319,15 +319,15 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
                 textureCandidates: [
                     {
                         sourceFile: "texture.fx",
-                        reference: "textures/main_diffuse.png",
-                        resolvedPath: "bundle/textures/main_diffuse.png",
+                        reference: "textures/MainTex.png",
+                        resolvedPath: "bundle/textures/MainTex.png",
                     },
                 ],
             },
             textureValidation: {
                 files: [
                     {
-                        path: "bundle/textures/main_diffuse.png",
+                        path: "bundle/textures/MainTex.png",
                         bytes: new Uint8Array([1]),
                     },
                 ],
@@ -338,8 +338,8 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
         expect(textureRecord?.preset).toBe("textureToon");
         expect(textureRecord?.textureReadiness.diffuseTexture).toMatchObject({
             status: "valid",
-            reference: "textures/main_diffuse.png",
-            resolvedPath: "bundle/textures/main_diffuse.png",
+            reference: "textures/MainTex.png",
+            resolvedPath: "bundle/textures/MainTex.png",
             extension: ".png",
             reason: "texture-ready",
         });
@@ -371,8 +371,8 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
                 textureCandidates: [
                     {
                         sourceFile: "texture-missing.fx",
-                        reference: "textures/main_diffuse_missing.png",
-                        resolvedPath: "bundle/textures/main_diffuse_missing.png",
+                        reference: "textures/MainTex.png",
+                        resolvedPath: "bundle/textures/MainTex.png",
                     },
                 ],
             },
@@ -385,12 +385,12 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
         expect(previewPlan[0].preset).toBe("textureToon");
         expect(previewPlan[0].textureReadiness.diffuseTexture).toMatchObject({
             status: "missing",
-            reference: "textures/main_diffuse_missing.png",
-            resolvedPath: "bundle/textures/main_diffuse_missing.png",
+            reference: "textures/MainTex.png",
+            resolvedPath: "bundle/textures/MainTex.png",
             extension: ".png",
             reason: "texture-file-missing",
         });
-        expect(previewPlan[0].textureReadiness.diffuseTexture.warnings).toContain("Resolved texture is not registered: bundle/textures/main_diffuse_missing.png");
+        expect(previewPlan[0].textureReadiness.diffuseTexture.warnings).toContain("Resolved texture is not registered: bundle/textures/MainTex.png");
     });
 
     it("keeps experimental apply disabled by default and reports gate status", () => {

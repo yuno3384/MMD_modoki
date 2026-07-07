@@ -346,7 +346,7 @@ function resolveTextureCandidate(
         };
     }
 
-    if (bestCandidate.score >= 2) {
+    if (bestCandidate.score >= 4) {
         return {
             reference: bestCandidate.entry.reference,
             resolvedPath: bestCandidate.entry.resolvedPath,
@@ -373,11 +373,9 @@ function scoreTextureCandidate(
     normalizedSemanticHints: readonly string[],
 ): number {
     const normalizedReference = reference.toLowerCase();
-    const lastSlash = normalizedReference.lastIndexOf("/");
-    const normalizedFileName = lastSlash >= 0 ? normalizedReference.slice(lastSlash + 1) : normalizedReference;
     let score = 0;
-    if (normalizedFileName.includes(normalizedTextureName)) score += 4;
-    if (normalizedNameHints.some((hint) => normalizedFileName.includes(hint))) score += 2;
+    if (normalizedReference.includes(normalizedTextureName)) score += 4;
+    if (normalizedNameHints.some((hint) => normalizedReference.includes(hint))) score += 2;
     if (normalizedSemanticHints.some((hint) => normalizedTextureSemantic.includes(hint))) score += 1;
     return score;
 }
