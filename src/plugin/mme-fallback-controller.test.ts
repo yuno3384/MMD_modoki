@@ -393,6 +393,238 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
         expect(previewPlan[0].textureReadiness.diffuseTexture.warnings).toContain("Resolved texture is not registered: bundle/textures/MainTex.png");
     });
 
+    it("builds a dry-run textureToon texture ownership transaction plan without applying", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial("original_texture");
+        const mesh = createMockMesh("BodyMesh", originalMaterial, scene);
+
+        const plan = controller.buildTextureToonTextureTransactionPlan([
+            {
+                effectId: "texture",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("texture.fx"),
+            },
+        ], createTexturePlanningContext("texture.fx", "textures/MainTex.png", "bundle/textures/MainTex.png", [
+            {
+                path: "bundle/textures/MainTex.png",
+                bytes: new Uint8Array([1]),
+            },
+        ]));
+
+        expect(plan).toMatchObject({
+            status: "planned",
+            failureReason: null,
+            rollbackPolicy: {
+                restoreOriginalMaterialOnRevert: true,
+                disposeCreatedFallbackMaterialOnRevert: true,
+                disposeCreatedFallbackMaterialOnFailure: true,
+                disposeCreatedTexturesOnRevert: true,
+                disposeCreatedTexturesOnFailure: true,
+                idempotentDisposeRequired: true,
+            },
+        });
+        expect(plan.targetRecords).toHaveLength(1);
+        expect(plan.targetRecords[0]).toMatchObject({
+            effectId: "texture",
+            targetName: "Miku",
+            meshName: "BodyMesh",
+            materialName: "BodyMaterial",
+            originalMaterial,
+            originalMaterialAvailable: true,
+            createdFallbackMaterial: null,
+            fallbackMaterialOwnership: "none",
+            rollbackState: "not-started",
+            failureReason: null,
+        });
+        expect(plan.targetRecords[0].textureOwnershipRecords).toHaveLength(1);
+        expect(plan.targetRecords[0].textureOwnershipRecords[0]).toMatchObject({
+            role: "diffuseTexture",
+            reference: "textures/MainTex.png",
+            resolvedPath: "bundle/textures/MainTex.png",
+            createdTexture: null,
+            textureOwnership: "controller-on-future-apply",
+            disposeTextureOnRevert: true,
+            disposeTextureOnFailure: true,
+        });
+        expect(mesh.material).toBe(originalMaterial);
+        expect(controller.getApplyPlan()).toBeNull();
+    });
+
+    it.each([
+        {
+            label: "missing",
+            reference: "textures/MainTex.png",
+            resolvedPath: "bundle/textures/MainTex.png",
+            files: [],
+            expectedReason: "texture-file-missing",
+        },
+        {
+            label: "unsupported",
+            reference: "textures/MainTex.gif",
+            resolvedPath: "bundle/textures/MainTex.gif",
+            files: [{ path: "bundle/textures/MainTex.gif", bytes: new Uint8Array([1]) }],
+            expectedReason: "texture-extension-unsupported",
+        },
+        {
+            label: "ambiguous",
+            reference: "textures/unknown_asset.png",
+            resolvedPath: "bundle/textures/unknown_asset.png",
+            files: [{ path: "bundle/textures/unknown_asset.png", bytes: new Uint8Array([1]) }],
+            expectedReason: "texture-candidate-ambiguous",
+        },
+        {
+            label: "unresolved",
+            reference: null,
+            resolvedPath: null,
+            files: [],
+            expectedReason: "texture-candidate-unresolved",
+        },
+        {
+            label: "failed",
+            reference: "textures/MainTex.png",
+            resolvedPath: "bundle/textures/MainTex.png",
+            files: createThrowingTextureFileMap(),
+            expectedReason: "texture-validation-failed",
+        },
+    ])("blocks texture ownership planning for $label texture readiness", (fixture) => {
+        const controller = new MmeFallbackController();
+        const originalMaterial = createMockMaterial(`original_${fixture.label}`);
+        const mesh = createMockMesh("BodyMesh", originalMaterial);
+        const context = fixture.reference
+            ? createTexturePlanningContext("texture.fx", fixture.reference, fixture.resolvedPath, fixture.files)
+            : undefined;
+
+        const plan = controller.buildTextureToonTextureTransactionPlan([
+            {
+                effectId: `texture-${fixture.label}`,
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("texture.fx"),
+            },
+        ], context);
+
+        expect(plan.status).toBe("blocked");
+        expect(plan.failureReason).toBe("texture-transaction-targets-invalid");
+        expect(plan.targetRecords).toHaveLength(1);
+        expect(plan.targetRecords[0].failureReason).toBe("texture-target-invalid");
+        expect(plan.targetRecords[0].textureOwnershipRecords).toEqual([]);
+        expect(plan.warnings.some((warning) => warning.includes(fixture.expectedReason))).toBe(true);
+        expect(mesh.material).toBe(originalMaterial);
+    });
+
+    it("blocks the whole texture transaction plan when one target is invalid", () => {
+        const controller = new MmeFallbackController();
+        const materialA = createMockMaterial("original_a");
+        const materialB = createMockMaterial("original_b");
+        const meshA = createMockMesh("BodyMesh", materialA);
+        const meshB = createMockMesh("FaceMesh", materialB);
+
+        const plan = controller.buildTextureToonTextureTransactionPlan([
+            {
+                effectId: "texture-valid",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh: meshA,
+                originalMaterial: materialA,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("valid.fx"),
+            },
+            {
+                effectId: "texture-missing",
+                targetName: "Miku",
+                meshName: "FaceMesh",
+                materialName: "FaceMaterial",
+                mesh: meshB,
+                originalMaterial: materialB,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("missing.fx"),
+            },
+        ], {
+            manifest: {
+                textureCandidates: [
+                    {
+                        sourceFile: "valid.fx",
+                        reference: "textures/MainTex.png",
+                        resolvedPath: "bundle/textures/MainTex.png",
+                    },
+                    {
+                        sourceFile: "missing.fx",
+                        reference: "textures/MainTex.png",
+                        resolvedPath: "bundle/missing/MainTex.png",
+                    },
+                ],
+            },
+            textureValidation: {
+                files: [
+                    {
+                        path: "bundle/textures/MainTex.png",
+                        bytes: new Uint8Array([1]),
+                    },
+                ],
+            },
+        });
+
+        expect(plan.status).toBe("blocked");
+        expect(plan.targetRecords).toHaveLength(2);
+        expect(plan.targetRecords[0].failureReason).toBeNull();
+        expect(plan.targetRecords[0].textureOwnershipRecords).toHaveLength(1);
+        expect(plan.targetRecords[1].failureReason).toBe("texture-target-invalid");
+        expect(plan.targetRecords[1].textureOwnershipRecords).toEqual([]);
+        expect(meshA.material).toBe(materialA);
+        expect(meshB.material).toBe(materialB);
+    });
+
+    it("keeps textureToon non-apply-eligible even when texture ownership can be planned", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial("original_texture_apply");
+        const mesh = createMockMesh("BodyMesh", originalMaterial, scene);
+
+        controller.setEnabled(true);
+        controller.setMode("apply");
+        controller.setExperimentalApplyEnabled(true);
+        controller.planApply([
+            {
+                effectId: "texture",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("texture.fx"),
+            },
+        ], createTexturePlanningContext("texture.fx", "textures/MainTex.png", "bundle/textures/MainTex.png", [
+            {
+                path: "bundle/textures/MainTex.png",
+                bytes: new Uint8Array([1]),
+            },
+        ]));
+
+        expect(controller.getApplyAvailability()).toMatchObject({
+            available: false,
+            reason: "apply-targets-invalid",
+        });
+        expect(controller.applyFallback()).toMatchObject({
+            status: "blocked",
+            reason: "apply-targets-invalid",
+        });
+        expect(mesh.material).toBe(originalMaterial);
+    });
+
     it("keeps experimental apply disabled by default and reports gate status", () => {
         const controller = new MmeFallbackController();
 
@@ -997,4 +1229,45 @@ function createMockMaterial(name: string): import("@babylonjs/core/Materials/mat
         name,
         dispose: vi.fn(),
     } as unknown as import("@babylonjs/core/Materials/material").Material;
+}
+
+function parseTextureEffect(path: string) {
+    return parseMmeEffectFile({
+        path,
+        kind: "fx",
+        text: `
+texture MainTex;
+sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
+`,
+    });
+}
+
+function createTexturePlanningContext(
+    sourceFile: string,
+    reference: string,
+    resolvedPath: string | null,
+    files: readonly { readonly path: string; readonly bytes: Uint8Array }[] | ReadonlyMap<string, { readonly path: string; readonly bytes: Uint8Array }>,
+) {
+    return {
+        manifest: {
+            textureCandidates: [
+                {
+                    sourceFile,
+                    reference,
+                    resolvedPath,
+                },
+            ],
+        },
+        textureValidation: {
+            files,
+        },
+    };
+}
+
+function createThrowingTextureFileMap(): ReadonlyMap<string, { readonly path: string; readonly bytes: Uint8Array }> {
+    return {
+        values() {
+            throw new Error("texture-context-failed");
+        },
+    } as unknown as ReadonlyMap<string, { readonly path: string; readonly bytes: Uint8Array }>;
 }

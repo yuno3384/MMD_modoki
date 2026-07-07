@@ -121,6 +121,55 @@ export type MmeFallbackApplyTransaction = {
     readonly status: "planned" | "applied" | "reverted" | "failed";
 };
 
+export type MmeFallbackTextureOwnershipRole = "diffuseTexture" | "toonRamp" | "sphereMap";
+
+export type MmeFallbackTextureOwnershipRecord = {
+    readonly role: MmeFallbackTextureOwnershipRole;
+    readonly readiness: MmeTextureValidationResult;
+    readonly reference: string | null;
+    readonly resolvedPath: string | null;
+    readonly createdTexture: null;
+    readonly textureOwnership: "none" | "controller-on-future-apply";
+    readonly disposeTextureOnRevert: boolean;
+    readonly disposeTextureOnFailure: boolean;
+};
+
+export type MmeFallbackTextureTransactionTargetRecord = {
+    readonly effectId: string;
+    readonly targetName: string | null;
+    readonly meshName: string | null;
+    readonly materialName: string | null;
+    readonly sourcePath: string | null;
+    readonly mesh: AbstractMesh | null;
+    readonly matchingPolicy: MmeFallbackTargetCandidate["matchingPolicy"] | null;
+    readonly originalMaterial: Material | null;
+    readonly originalMaterialAvailable: boolean;
+    readonly plannedFallback: MmeFallbackPreviewPlanItem;
+    readonly createdFallbackMaterial: null;
+    readonly fallbackMaterialOwnership: "none" | "controller-on-future-apply";
+    readonly textureOwnershipRecords: readonly MmeFallbackTextureOwnershipRecord[];
+    readonly rollbackState: "not-started" | "planned";
+    readonly failureReason: string | null;
+    readonly warnings: readonly string[];
+};
+
+export type MmeFallbackTextureTransactionPlan = {
+    readonly transactionId: string;
+    readonly createdAt: string;
+    readonly status: "planned" | "blocked";
+    readonly targetRecords: readonly MmeFallbackTextureTransactionTargetRecord[];
+    readonly failureReason: string | null;
+    readonly warnings: readonly string[];
+    readonly rollbackPolicy: {
+        readonly restoreOriginalMaterialOnRevert: boolean;
+        readonly disposeCreatedFallbackMaterialOnRevert: boolean;
+        readonly disposeCreatedFallbackMaterialOnFailure: boolean;
+        readonly disposeCreatedTexturesOnRevert: boolean;
+        readonly disposeCreatedTexturesOnFailure: boolean;
+        readonly idempotentDisposeRequired: boolean;
+    };
+};
+
 export type MmeFallbackTargetCandidateStatus = "global-effect-candidate" | "unsupported" | "unmatched";
 
 export type MmeFallbackTargetCandidate = {
@@ -520,6 +569,26 @@ export class MmeFallbackController {
         return this.applyPlan;
     }
 
+    public buildTextureToonTextureTransactionPlan(
+        inputs: readonly MmeFallbackPreviewInput[],
+        context?: MmeFallbackPlanningContext,
+    ): MmeFallbackTextureTransactionPlan {
+        const previewPlan = this.buildPlannedTargets(inputs, context);
+        const targetRecords = previewPlan.map((entry, index) =>
+            buildTextureTransactionTargetRecord(entry, inputs[index] ?? null));
+        const warnings = targetRecords.flatMap((record) => record.warnings);
+
+        return {
+            transactionId: this.createTransactionId(),
+            createdAt: new Date().toISOString(),
+            status: warnings.length > 0 ? "blocked" : "planned",
+            targetRecords,
+            failureReason: warnings.length > 0 ? "texture-transaction-targets-invalid" : null,
+            warnings,
+            rollbackPolicy: createTextureTransactionRollbackPolicy(),
+        };
+    }
+
     public getApplyAvailability(): MmeFallbackApplyAvailability {
         if (!this.enabled) {
             return {
@@ -872,6 +941,104 @@ function buildTextureReadinessMetadata(
         diffuseTexture: validateMmeTextureCandidate(analysis.mappedFields.diffuseTexture, context),
         toonRamp: validateMmeTextureCandidate(analysis.mappedFields.toonRamp, context),
         sphereMap: validateMmeTextureCandidate(analysis.mappedFields.sphereMap, context),
+    };
+}
+
+function buildTextureTransactionTargetRecord(
+    entry: MmeFallbackPreviewPlanItem,
+    input: MmeFallbackPreviewInput | null,
+): MmeFallbackTextureTransactionTargetRecord {
+    const warnings: string[] = [];
+    const textureOwnershipRecords = buildTextureOwnershipRecords(entry, warnings);
+
+    if (entry.preset !== "textureToon") {
+        warnings.push(`Only textureToon fallback texture ownership can be planned: ${entry.effectId}`);
+    }
+    if ((input?.matchingPolicy ?? null) !== "single-global-effect") {
+        warnings.push(`Only single-global-effect candidates can be planned for future textureToon texture ownership: ${entry.effectId}`);
+    }
+    if (textureOwnershipRecords.length === 0) {
+        warnings.push(`No valid mapped texture candidate is available for future textureToon texture ownership: ${entry.effectId}`);
+    }
+
+    return {
+        effectId: entry.effectId,
+        targetName: entry.targetName,
+        meshName: entry.meshName,
+        materialName: entry.materialName,
+        sourcePath: entry.sourcePath,
+        mesh: input?.mesh ?? null,
+        matchingPolicy: input?.matchingPolicy ?? null,
+        originalMaterial: input?.originalMaterial ?? null,
+        originalMaterialAvailable: Object.prototype.hasOwnProperty.call(input ?? {}, "originalMaterial"),
+        plannedFallback: entry,
+        createdFallbackMaterial: null,
+        fallbackMaterialOwnership: "none",
+        textureOwnershipRecords,
+        rollbackState: "not-started",
+        failureReason: warnings.length > 0 ? "texture-target-invalid" : null,
+        warnings,
+    };
+}
+
+function buildTextureOwnershipRecords(
+    entry: MmeFallbackPreviewPlanItem,
+    warnings: string[],
+): MmeFallbackTextureOwnershipRecord[] {
+    const records: MmeFallbackTextureOwnershipRecord[] = [];
+    const mappedFields = entry.analysis.mappedFields;
+    const candidates: Array<{
+        readonly role: MmeFallbackTextureOwnershipRole;
+        readonly isMapped: boolean;
+        readonly readiness: MmeTextureValidationResult;
+    }> = [
+        {
+            role: "diffuseTexture",
+            isMapped: mappedFields.diffuseTexture !== null,
+            readiness: entry.textureReadiness.diffuseTexture,
+        },
+        {
+            role: "toonRamp",
+            isMapped: mappedFields.toonRamp !== null,
+            readiness: entry.textureReadiness.toonRamp,
+        },
+        {
+            role: "sphereMap",
+            isMapped: mappedFields.sphereMap !== null,
+            readiness: entry.textureReadiness.sphereMap,
+        },
+    ];
+
+    for (const candidate of candidates) {
+        if (!candidate.isMapped) continue;
+        if (candidate.readiness.status !== "valid") {
+            warnings.push(`${candidate.role} is not textureToon apply-ready: ${candidate.readiness.reason}`);
+            continue;
+        }
+
+        records.push({
+            role: candidate.role,
+            readiness: candidate.readiness,
+            reference: candidate.readiness.reference,
+            resolvedPath: candidate.readiness.resolvedPath,
+            createdTexture: null,
+            textureOwnership: "controller-on-future-apply",
+            disposeTextureOnRevert: true,
+            disposeTextureOnFailure: true,
+        });
+    }
+
+    return records;
+}
+
+function createTextureTransactionRollbackPolicy(): MmeFallbackTextureTransactionPlan["rollbackPolicy"] {
+    return {
+        restoreOriginalMaterialOnRevert: true,
+        disposeCreatedFallbackMaterialOnRevert: true,
+        disposeCreatedFallbackMaterialOnFailure: true,
+        disposeCreatedTexturesOnRevert: true,
+        disposeCreatedTexturesOnFailure: true,
+        idempotentDisposeRequired: true,
     };
 }
 
