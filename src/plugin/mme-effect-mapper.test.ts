@@ -41,13 +41,13 @@ sampler2D SphereSampler = sampler_state { Texture = <SphereTex>; };
                 textureCandidates: [
                     {
                         sourceFile: "tex.fx",
-                        reference: "textures/main_diffuse.png",
-                        resolvedPath: "bundle/textures/main_diffuse.png",
+                        reference: "textures/MainTex.png",
+                        resolvedPath: "bundle/textures/MainTex.png",
                     },
                     {
                         sourceFile: "tex.fx",
-                        reference: "env/matcap.sph",
-                        resolvedPath: "bundle/env/matcap.sph",
+                        reference: "env/SphereTex.sph",
+                        resolvedPath: "bundle/env/SphereTex.sph",
                     },
                 ],
             },
@@ -55,11 +55,11 @@ sampler2D SphereSampler = sampler_state { Texture = <SphereTex>; };
 
         expect(analysis.status).toBe("partiallyMapped");
         expect(analysis.mappedFields.diffuseTexture?.name).toBe("MainTex");
-        expect(analysis.mappedFields.diffuseTexture?.reference).toBe("textures/main_diffuse.png");
-        expect(analysis.mappedFields.diffuseTexture?.resolvedPath).toBe("bundle/textures/main_diffuse.png");
+        expect(analysis.mappedFields.diffuseTexture?.reference).toBe("textures/MainTex.png");
+        expect(analysis.mappedFields.diffuseTexture?.resolvedPath).toBe("bundle/textures/MainTex.png");
         expect(analysis.mappedFields.diffuseTexture?.status).toBe("resolved");
         expect(analysis.mappedFields.sphereMap?.name).toBe("SphereTex");
-        expect(analysis.mappedFields.sphereMap?.reference).toBe("env/matcap.sph");
+        expect(analysis.mappedFields.sphereMap?.reference).toBe("env/SphereTex.sph");
         expect(analysis.mappedFields.sphereMap?.status).toBe("resolved");
     });
 
@@ -78,8 +78,8 @@ sampler2D ToonSampler = sampler_state { Texture = <ToonRamp>; };
                 textureCandidates: [
                     {
                         sourceFile: "toon.fx",
-                        reference: "toon/toon02.bmp",
-                        resolvedPath: "bundle/toon/toon02.bmp",
+                        reference: "toon/ToonRamp.bmp",
+                        resolvedPath: "bundle/toon/ToonRamp.bmp",
                     },
                 ],
             },
@@ -87,8 +87,8 @@ sampler2D ToonSampler = sampler_state { Texture = <ToonRamp>; };
 
         expect(analysis.mappedFields.toonRamp).toMatchObject({
             name: "ToonRamp",
-            reference: "toon/toon02.bmp",
-            resolvedPath: "bundle/toon/toon02.bmp",
+            reference: "toon/ToonRamp.bmp",
+            resolvedPath: "bundle/toon/ToonRamp.bmp",
             status: "resolved",
         });
     });

@@ -75,6 +75,43 @@ export function planMmeFallbackPreset(
     const hasStrongTextureToonEvidence = hasResolvedDiffuseTexture || hasResolvedToonRamp;
     const hasStrongKatameEvidence = hasResolvedToonRamp || hasResolvedSphereMap || hasSpecular;
 
+    if (hasEmissive && !isRenderTargetHeavy(effect)) {
+        return {
+            preset: "emissiveLite",
+            confidence: 0.72,
+            reasons: [
+                "Emissive color or emissive texture was detected",
+                "No render-target-heavy behavior was detected",
+            ],
+            requiredFields: ["emissiveColor or emissiveTexture"],
+            optionalFields: ["diffuseColor", "diffuseTexture"],
+            missingFields: [],
+            blockedByUnsupportedFeatures,
+            warnings,
+        };
+    }
+
+    if (hasStrongKatameEvidence && !isShaderDependent(effect)) {
+        const missingFields = [];
+        if (!hasResolvedToonRamp && !hasResolvedSphereMap) {
+            missingFields.push("toonRamp or sphereMap");
+        }
+
+        return {
+            preset: "katameLike",
+            confidence: hasResolvedToonRamp || hasResolvedSphereMap ? 0.78 : 0.62,
+            reasons: [
+                "Toon ramp, sphere/matcap, or strong specular-like fields were detected",
+                "No custom shader dependency or complex render target flow was detected",
+            ],
+            requiredFields: ["toonRamp or sphereMap or strong specular-like fields"],
+            optionalFields: ["diffuseTexture", "diffuseColor", "specularIntensity"],
+            missingFields,
+            blockedByUnsupportedFeatures,
+            warnings,
+        };
+    }
+
     if ((hasDiffuseTexture || hasToonRamp) && blockedByUnsupportedFeatures.length === 0) {
         const missingFields = [];
         if (!hasDiffuseTexture) missingFields.push("diffuseTexture");
@@ -118,43 +155,6 @@ export function planMmeFallbackPreset(
             requiredFields: ["diffuseColor"],
             optionalFields: ["alpha", "specularIntensity"],
             missingFields: [],
-            blockedByUnsupportedFeatures,
-            warnings,
-        };
-    }
-
-    if (hasEmissive && !isRenderTargetHeavy(effect)) {
-        return {
-            preset: "emissiveLite",
-            confidence: 0.72,
-            reasons: [
-                "Emissive color or emissive texture was detected",
-                "No render-target-heavy behavior was detected",
-            ],
-            requiredFields: ["emissiveColor or emissiveTexture"],
-            optionalFields: ["diffuseColor", "diffuseTexture"],
-            missingFields: [],
-            blockedByUnsupportedFeatures,
-            warnings,
-        };
-    }
-
-    if (hasStrongKatameEvidence && !isShaderDependent(effect)) {
-        const missingFields = [];
-        if (!hasResolvedToonRamp && !hasResolvedSphereMap) {
-            missingFields.push("toonRamp or sphereMap");
-        }
-
-        return {
-            preset: "katameLike",
-            confidence: hasResolvedToonRamp || hasResolvedSphereMap ? 0.78 : 0.62,
-            reasons: [
-                "Toon ramp, sphere/matcap, or strong specular-like fields were detected",
-                "No custom shader dependency or complex render target flow was detected",
-            ],
-            requiredFields: ["toonRamp or sphereMap or strong specular-like fields"],
-            optionalFields: ["diffuseTexture", "diffuseColor", "specularIntensity"],
-            missingFields,
             blockedByUnsupportedFeatures,
             warnings,
         };
