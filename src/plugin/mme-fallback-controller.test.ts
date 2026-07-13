@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MmeFallbackController } from "./mme-fallback-controller";
 import { parseMmeEffectFile } from "./mme-fx-parser";
@@ -7,6 +7,15 @@ import type { MaterialEffectTarget } from "./material-targets";
 const highlightLayerInstances: Array<{
     readonly addMesh: ReturnType<typeof vi.fn>;
     readonly removeMesh: ReturnType<typeof vi.fn>;
+    readonly dispose: ReturnType<typeof vi.fn>;
+}> = [];
+const textureInstances: Array<{
+    readonly url: string;
+    readonly dispose: ReturnType<typeof vi.fn>;
+}> = [];
+const factoryMaterialInstances: Array<{
+    readonly name: string;
+    diffuseTexture: unknown;
     readonly dispose: ReturnType<typeof vi.fn>;
 }> = [];
 
@@ -22,10 +31,23 @@ vi.mock("@babylonjs/core/Layers/highlightLayer", () => ({
     },
 }));
 
+vi.mock("@babylonjs/core/Materials/Textures/texture", () => ({
+    Texture: class MockTexture {
+        public readonly dispose = vi.fn();
+        public constructor(public readonly url: string) {
+            if (url.includes("throw")) {
+                throw new Error("texture-allocation-failed");
+            }
+            textureInstances.push(this);
+        }
+    },
+}));
+
 vi.mock("./mme-fallback-material-factory", () => ({
     createMmeFallbackMaterial(params: {
         dryRun?: boolean;
         plan: { preset: string; missingFields: readonly string[]; blockedByUnsupportedFeatures: readonly string[] };
+        analysis: { mappedFields: { diffuseTexture?: { resolvedPath?: string | null } | null } };
     }) {
         const dryRun = params.dryRun ?? true;
         const warnings: string[] = [];
@@ -39,13 +61,16 @@ vi.mock("./mme-fallback-material-factory", () => ({
                 warnings,
             };
         }
-        if (params.plan.missingFields.length > 0) {
+        const blockingMissingFields = params.plan.preset === "textureToon" && params.analysis.mappedFields.diffuseTexture?.resolvedPath
+            ? params.plan.missingFields.filter((field) => field !== "toonRamp")
+            : params.plan.missingFields;
+        if (blockingMissingFields.length > 0) {
             return {
                 status: "skipped",
                 preset: params.plan.preset,
                 materialName: "mock_skipped",
                 materialType: "none",
-                warnings: [...warnings, `Missing required fields: ${params.plan.missingFields.join(", ")}`],
+                warnings: [...warnings, `Missing required fields: ${blockingMissingFields.join(", ")}`],
             };
         }
         if (params.plan.blockedByUnsupportedFeatures.length > 0 || params.plan.preset === "katameLike") {
@@ -68,16 +93,20 @@ vi.mock("./mme-fallback-material-factory", () => ({
             };
         }
 
+        const createdMaterial = {
+            name: `mock_${params.plan.preset}`,
+            diffuseTexture: null,
+            dispose: vi.fn(),
+        };
+        factoryMaterialInstances.push(createdMaterial);
+
         return {
             status: "created",
             preset: params.plan.preset,
             materialName: `mock_${params.plan.preset}`,
             materialType: "StandardMaterial",
             warnings,
-            createdMaterial: {
-                name: `mock_${params.plan.preset}`,
-                dispose: vi.fn(),
-            },
+            createdMaterial,
         };
     },
     disposeMmeFallbackMaterial(resultOrMaterial: { createdMaterial?: { dispose?: () => void }; dispose?: () => void } | null | undefined) {
@@ -91,6 +120,12 @@ vi.mock("./mme-fallback-material-factory", () => ({
 }));
 
 describe("MmeFallbackController", () => {
+    beforeEach(() => {
+        highlightLayerInstances.length = 0;
+        textureInstances.length = 0;
+        factoryMaterialInstances.length = 0;
+    });
+
     it("starts disabled in preview mode", () => {
         const controller = new MmeFallbackController();
 
@@ -286,7 +321,7 @@ technique Post {
         });
     });
 
-    it("keeps textureToon preview plans ineligible for apply availability", () => {
+    it("allows textureToon apply availability only for a valid resolved diffuse texture", () => {
         const controller = new MmeFallbackController();
         const scene = {} as import("@babylonjs/core/scene").Scene;
         const originalMaterial = createMockMaterial("original_texture");
@@ -344,8 +379,8 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
             reason: "texture-ready",
         });
         expect(controller.getApplyAvailability()).toMatchObject({
-            available: false,
-            reason: "apply-targets-invalid",
+            available: true,
+            reason: "apply-ready",
         });
     });
 
@@ -523,6 +558,127 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
         expect(mesh.material).toBe(originalMaterial);
     });
 
+    it.each([
+        {
+            label: "missing",
+            reference: "textures/MainTex.png",
+            resolvedPath: "bundle/textures/MainTex.png",
+            files: [],
+            expectedReason: "texture-file-missing",
+        },
+        {
+            label: "unsupported",
+            reference: "textures/MainTex.gif",
+            resolvedPath: "bundle/textures/MainTex.gif",
+            files: [{ path: "bundle/textures/MainTex.gif", bytes: new Uint8Array([1]) }],
+            expectedReason: "texture-extension-unsupported",
+        },
+        {
+            label: "ambiguous",
+            reference: "textures/unknown_asset.png",
+            resolvedPath: "bundle/textures/unknown_asset.png",
+            files: [{ path: "bundle/textures/unknown_asset.png", bytes: new Uint8Array([1]) }],
+            expectedReason: "texture-candidate-ambiguous",
+        },
+        {
+            label: "unresolved",
+            reference: null,
+            resolvedPath: null,
+            files: [],
+            expectedReason: "texture-candidate-unresolved",
+        },
+        {
+            label: "failed",
+            reference: "textures/MainTex.png",
+            resolvedPath: "bundle/textures/MainTex.png",
+            files: createThrowingTextureFileMap(),
+            expectedReason: "texture-validation-failed",
+        },
+    ])("blocks textureToon apply for $label texture readiness", (fixture) => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial(`original_apply_${fixture.label}`);
+        const mesh = createMockMesh("BodyMesh", originalMaterial, scene);
+        const context = fixture.reference
+            ? createTexturePlanningContext("texture.fx", fixture.reference, fixture.resolvedPath, fixture.files)
+            : undefined;
+
+        controller.setEnabled(true);
+        controller.setMode("apply");
+        controller.setExperimentalApplyEnabled(true);
+        controller.planApply([
+            {
+                effectId: `texture-${fixture.label}`,
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("texture.fx"),
+            },
+        ], context);
+        forceTextureToonApplyPlan(controller);
+
+        expect(controller.getApplyAvailability()).toMatchObject({
+            available: false,
+            reason: "apply-targets-invalid",
+        });
+        expect(controller.getApplyAvailability().warnings.some((warning) => warning.includes(fixture.expectedReason))).toBe(true);
+        expect(controller.applyFallback()).toMatchObject({
+            status: "blocked",
+            reason: "apply-targets-invalid",
+        });
+        expect(mesh.material).toBe(originalMaterial);
+        expect(textureInstances).toEqual([]);
+        expect(factoryMaterialInstances).toEqual([]);
+    });
+
+    it("blocks textureToon apply behind controller, mode, and experimental gates", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial("original_texture_gate");
+        const mesh = createMockMesh("BodyMesh", originalMaterial, scene);
+        const input = {
+            effectId: "texture",
+            targetName: "Miku",
+            meshName: "BodyMesh",
+            materialName: "BodyMaterial",
+            mesh,
+            scene,
+            originalMaterial,
+            matchingPolicy: "single-global-effect" as const,
+            effect: parseTextureEffect("texture.fx"),
+        };
+        const context = createTexturePlanningContext("texture.fx", "textures/MainTex.png", "bundle/textures/MainTex.png", [
+            {
+                path: "bundle/textures/MainTex.png",
+                bytes: new Uint8Array([1]),
+            },
+        ]);
+
+        controller.planApply([input], context);
+        expect(controller.applyFallback()).toMatchObject({
+            status: "blocked",
+            reason: "controller-disabled",
+        });
+
+        controller.setEnabled(true);
+        controller.planApply([input], context);
+        expect(controller.applyFallback()).toMatchObject({
+            status: "blocked",
+            reason: "not-apply-mode",
+        });
+
+        controller.setMode("apply");
+        expect(controller.applyFallback()).toMatchObject({
+            status: "blocked",
+            reason: "experimental-apply-disabled",
+        });
+        expect(mesh.material).toBe(originalMaterial);
+    });
+
     it("blocks the whole texture transaction plan when one target is invalid", () => {
         const controller = new MmeFallbackController();
         const materialA = createMockMaterial("original_a");
@@ -586,7 +742,7 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
         expect(meshB.material).toBe(materialB);
     });
 
-    it("keeps textureToon non-apply-eligible even when texture ownership can be planned", () => {
+    it("applies a valid textureToon fallback and reverts texture/material ownership", () => {
         const controller = new MmeFallbackController();
         const scene = {} as import("@babylonjs/core/scene").Scene;
         const originalMaterial = createMockMaterial("original_texture_apply");
@@ -615,14 +771,269 @@ sampler2D MainSampler = sampler_state { Texture = <MainTex>; };
         ]));
 
         expect(controller.getApplyAvailability()).toMatchObject({
+            available: true,
+            reason: "apply-ready",
+        });
+
+        const applyResult = controller.applyFallback();
+        expect(applyResult).toMatchObject({
+            status: "applied",
+            reason: "apply-succeeded",
+        });
+        const fallbackMaterial = mesh.material as unknown as {
+            diffuseTexture: { url: string; dispose: ReturnType<typeof vi.fn> };
+            dispose: ReturnType<typeof vi.fn>;
+        };
+        expect(fallbackMaterial).not.toBe(originalMaterial);
+        expect(fallbackMaterial.diffuseTexture.url).toBe("bundle/textures/MainTex.png");
+        expect(textureInstances).toHaveLength(1);
+        expect(controller.getApplyPlan()?.targetRecords[0].createdTextures).toHaveLength(1);
+
+        const revertResult = controller.revertApply();
+        expect(revertResult).toMatchObject({
+            status: "reverted",
+            reason: "revert-succeeded",
+        });
+        expect(mesh.material).toBe(originalMaterial);
+        expect(fallbackMaterial.dispose).toHaveBeenCalledTimes(1);
+        expect(fallbackMaterial.diffuseTexture.dispose).toHaveBeenCalledTimes(1);
+        expect(controller.getApplyPlan()?.targetRecords[0].createdTextures).toEqual([]);
+    });
+
+    it("double revert after textureToon apply is safe", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial("original_texture_apply");
+        const mesh = createMockMesh("BodyMesh", originalMaterial, scene);
+
+        controller.setEnabled(true);
+        controller.setMode("apply");
+        controller.setExperimentalApplyEnabled(true);
+        controller.planApply([
+            {
+                effectId: "texture",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("texture.fx"),
+            },
+        ], createTexturePlanningContext("texture.fx", "textures/MainTex.png", "bundle/textures/MainTex.png", [
+            {
+                path: "bundle/textures/MainTex.png",
+                bytes: new Uint8Array([1]),
+            },
+        ]));
+
+        expect(controller.applyFallback()).toMatchObject({
+            status: "applied",
+        });
+        const fallbackMaterial = mesh.material as unknown as {
+            diffuseTexture: { dispose: ReturnType<typeof vi.fn> };
+            dispose: ReturnType<typeof vi.fn>;
+        };
+
+        expect(controller.revertApply()).toMatchObject({
+            status: "reverted",
+            reason: "revert-succeeded",
+        });
+        expect(controller.revertApply()).toMatchObject({
+            status: "noop",
+            reason: "transaction-not-applied",
+        });
+        expect(mesh.material).toBe(originalMaterial);
+        expect(fallbackMaterial.dispose).toHaveBeenCalledTimes(1);
+        expect(fallbackMaterial.diffuseTexture.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it("blocks duplicate same-mesh textureToon targets before allocation", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial("original_texture_duplicate");
+        const mesh = createMockMesh("BodyMesh", originalMaterial, scene);
+        const context = {
+            manifest: {
+                textureCandidates: [
+                    {
+                        sourceFile: "texture-a.fx",
+                        reference: "textures/MainTex.png",
+                        resolvedPath: "bundle/textures/MainTex.png",
+                    },
+                    {
+                        sourceFile: "texture-b.fx",
+                        reference: "textures/MainTex.png",
+                        resolvedPath: "bundle/textures/MainTex.png",
+                    },
+                ],
+            },
+            textureValidation: {
+                files: [
+                    {
+                        path: "bundle/textures/MainTex.png",
+                        bytes: new Uint8Array([1]),
+                    },
+                ],
+            },
+        };
+
+        controller.setEnabled(true);
+        controller.setMode("apply");
+        controller.setExperimentalApplyEnabled(true);
+        controller.planApply([
+            {
+                effectId: "texture-a",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterialA",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("texture-a.fx"),
+            },
+            {
+                effectId: "texture-b",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterialB",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("texture-b.fx"),
+            },
+        ], context);
+
+        expect(controller.applyFallback()).toMatchObject({
+            status: "blocked",
+            reason: "duplicate-mesh-target",
+        });
+        expect(mesh.material).toBe(originalMaterial);
+        expect(textureInstances).toEqual([]);
+        expect(factoryMaterialInstances).toEqual([]);
+    });
+
+    it("blocks multiple textureToon diffuse targets in one transaction", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const materialA = createMockMaterial("original_texture_a");
+        const materialB = createMockMaterial("original_texture_b");
+        const meshA = createMockMesh("BodyMesh", materialA, scene);
+        const meshB = createMockMesh("FaceMesh", materialB, scene);
+        const context = {
+            manifest: {
+                textureCandidates: [
+                    {
+                        sourceFile: "texture-a.fx",
+                        reference: "textures/MainTexA.png",
+                        resolvedPath: "bundle/textures/MainTexA.png",
+                    },
+                    {
+                        sourceFile: "texture-b.fx",
+                        reference: "textures/MainTexB.png",
+                        resolvedPath: "bundle/textures/MainTexB.png",
+                    },
+                ],
+            },
+            textureValidation: {
+                files: [
+                    {
+                        path: "bundle/textures/MainTexA.png",
+                        bytes: new Uint8Array([1]),
+                    },
+                    {
+                        path: "bundle/textures/MainTexB.png",
+                        bytes: new Uint8Array([1]),
+                    },
+                ],
+            },
+        };
+
+        controller.setEnabled(true);
+        controller.setMode("apply");
+        controller.setExperimentalApplyEnabled(true);
+        controller.planApply([
+            {
+                effectId: "texture-a",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh: meshA,
+                scene,
+                originalMaterial: materialA,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("texture-a.fx"),
+            },
+            {
+                effectId: "texture-b",
+                targetName: "Miku",
+                meshName: "FaceMesh",
+                materialName: "FaceMaterial",
+                mesh: meshB,
+                scene,
+                originalMaterial: materialB,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("texture-b.fx"),
+            },
+        ], context);
+
+        expect(controller.getApplyAvailability()).toMatchObject({
             available: false,
             reason: "apply-targets-invalid",
         });
+        expect(controller.getApplyAvailability().warnings.some((warning) => warning.includes("limited to one resolved diffuse texture target"))).toBe(true);
         expect(controller.applyFallback()).toMatchObject({
             status: "blocked",
             reason: "apply-targets-invalid",
         });
+        expect(meshA.material).toBe(materialA);
+        expect(meshB.material).toBe(materialB);
+        expect(textureInstances).toEqual([]);
+        expect(factoryMaterialInstances).toEqual([]);
+    });
+
+    it("rolls back textureToon allocation failure before mesh material assignment", () => {
+        const controller = new MmeFallbackController();
+        const scene = {} as import("@babylonjs/core/scene").Scene;
+        const originalMaterial = createMockMaterial("original_texture_failure");
+        const mesh = createMockMesh("BodyMesh", originalMaterial, scene);
+
+        controller.setEnabled(true);
+        controller.setMode("apply");
+        controller.setExperimentalApplyEnabled(true);
+        controller.planApply([
+            {
+                effectId: "texture",
+                targetName: "Miku",
+                meshName: "BodyMesh",
+                materialName: "BodyMaterial",
+                mesh,
+                scene,
+                originalMaterial,
+                matchingPolicy: "single-global-effect",
+                effect: parseTextureEffect("texture.fx"),
+            },
+        ], createTexturePlanningContext("texture.fx", "textures/MainTex.png", "bundle/textures/throw.png", [
+            {
+                path: "bundle/textures/throw.png",
+                bytes: new Uint8Array([1]),
+            },
+        ]));
+
+        const result = controller.applyFallback();
+
+        expect(result).toMatchObject({
+            status: "blocked",
+            reason: "texture-create-failed",
+        });
         expect(mesh.material).toBe(originalMaterial);
+        expect(textureInstances).toEqual([]);
+        expect(factoryMaterialInstances).toHaveLength(1);
+        expect(factoryMaterialInstances[0].dispose).toHaveBeenCalledTimes(1);
+        expect(controller.getApplyPlan()?.status).toBe("planned");
     });
 
     it("keeps experimental apply disabled by default and reports gate status", () => {
@@ -1229,6 +1640,20 @@ function createMockMaterial(name: string): import("@babylonjs/core/Materials/mat
         name,
         dispose: vi.fn(),
     } as unknown as import("@babylonjs/core/Materials/material").Material;
+}
+
+function forceTextureToonApplyPlan(controller: MmeFallbackController): void {
+    const record = controller.getApplyPlan()?.targetRecords[0];
+    if (!record) return;
+    const plannedFallback = record.plannedFallback as unknown as {
+        preset: string;
+        factoryStatus: string;
+        fallbackPlan: { preset: string; missingFields: string[] };
+    };
+    plannedFallback.preset = "textureToon";
+    plannedFallback.factoryStatus = "created";
+    plannedFallback.fallbackPlan.preset = "textureToon";
+    plannedFallback.fallbackPlan.missingFields = [];
 }
 
 function parseTextureEffect(path: string) {

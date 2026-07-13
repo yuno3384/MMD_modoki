@@ -98,6 +98,7 @@ describe("InternalMmeCompatManifestPlugin", () => {
                     originalMaterial: null,
                     originalMaterialAvailable: false,
                     createdFallbackMaterial: null,
+                    createdTextures: [],
                     plannedFallback: {
                         effectId: "bundle/main.fx",
                         targetName: "Miku",

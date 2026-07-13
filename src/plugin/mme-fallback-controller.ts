@@ -1,6 +1,7 @@
 import { HighlightLayer } from "@babylonjs/core/Layers/highlightLayer";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
 import type { Material } from "@babylonjs/core/Materials/material";
+import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import type { Mesh } from "@babylonjs/core/Meshes/mesh";
 import type { Scene } from "@babylonjs/core/scene";
@@ -110,8 +111,19 @@ export type MmeFallbackApplyTargetRecord = {
     readonly originalMaterial: Material | null;
     readonly originalMaterialAvailable: boolean;
     readonly createdFallbackMaterial: Material | null;
+    readonly createdTextures: readonly MmeFallbackAppliedTextureRecord[];
     readonly plannedFallback: MmeFallbackPreviewPlanItem;
     readonly plannedFallbackOwnership: "none" | "controller" | "external";
+};
+
+export type MmeFallbackAppliedTextureRecord = {
+    readonly role: MmeFallbackTextureOwnershipRole;
+    readonly reference: string | null;
+    readonly resolvedPath: string | null;
+    readonly texture: Texture;
+    readonly textureOwnership: "controller";
+    readonly disposeTextureOnRevert: boolean;
+    readonly disposeTextureOnFailure: boolean;
 };
 
 export type MmeFallbackApplyTransaction = {
@@ -549,6 +561,7 @@ export class MmeFallbackController {
                 originalMaterial: inputs[index]?.originalMaterial ?? null,
                 originalMaterialAvailable: Object.prototype.hasOwnProperty.call(inputs[index] ?? {}, "originalMaterial"),
                 createdFallbackMaterial: null,
+                createdTextures: [],
                 plannedFallback: entry,
                 plannedFallbackOwnership: "none",
             })),
@@ -656,6 +669,7 @@ export class MmeFallbackController {
             readonly record: MmeFallbackApplyTargetRecord;
             readonly result: MmeFallbackMaterialFactoryResult;
             readonly scene: Scene;
+            readonly createdTextures: readonly MmeFallbackAppliedTextureRecord[];
         }> = [];
 
         for (const record of this.applyPlan.targetRecords) {
@@ -692,10 +706,23 @@ export class MmeFallbackController {
                 };
             }
 
+            const textureResult = createApplyTexturesForRecord(record, result.createdMaterial, scene);
+            if (textureResult.status === "failed") {
+                disposeMmeFallbackMaterial(result);
+                this.disposeApplyTextureRecords(textureResult.createdTextures);
+                this.disposeFactoryAllocations(allocations);
+                return {
+                    status: "blocked",
+                    reason: textureResult.reason,
+                    warnings: textureResult.warnings,
+                };
+            }
+
             allocations.push({
                 record,
                 result,
                 scene,
+                createdTextures: textureResult.createdTextures,
             });
         }
 
@@ -743,6 +770,7 @@ export class MmeFallbackController {
                     originalMaterial: assignment?.originalMaterial ?? record.originalMaterial,
                     originalMaterialAvailable: true,
                     createdFallbackMaterial: allocation?.result.createdMaterial ?? null,
+                    createdTextures: allocation?.createdTextures ?? [],
                     plannedFallbackOwnership: allocation ? "controller" : record.plannedFallbackOwnership,
                 };
             }),
@@ -785,6 +813,7 @@ export class MmeFallbackController {
             if (record.createdFallbackMaterial) {
                 disposeMmeFallbackMaterial(record.createdFallbackMaterial);
             }
+            this.disposeApplyTextureRecords(record.createdTextures);
         }
 
         this.applyPlan = {
@@ -793,6 +822,7 @@ export class MmeFallbackController {
             targetRecords: this.applyPlan.targetRecords.map((record) => ({
                 ...record,
                 createdFallbackMaterial: null,
+                createdTextures: [],
                 plannedFallbackOwnership: "none",
             })),
         };
@@ -893,6 +923,9 @@ export class MmeFallbackController {
     } {
         const warnings: string[] = [];
         const seenMeshes = new Set<AbstractMesh>();
+        const textureToonTargetCount = transaction.targetRecords
+            .filter((record) => record.plannedFallback.preset === "textureToon")
+            .length;
 
         for (const record of transaction.targetRecords) {
             if (!record.mesh) {
@@ -910,8 +943,14 @@ export class MmeFallbackController {
             if (record.matchingPolicy !== "single-global-effect") {
                 warnings.push(`Only single-global-effect candidates can be applied: ${record.materialName ?? record.meshName ?? record.effectId}`);
             }
-            if (record.plannedFallback.preset !== "basicToon") {
-                warnings.push(`Only basicToon fallback apply is enabled in this step: ${record.materialName ?? record.meshName ?? record.effectId}`);
+            if (record.plannedFallback.preset === "textureToon") {
+                if (textureToonTargetCount > 1) {
+                    warnings.push(`textureToon apply is limited to one resolved diffuse texture target per transaction: ${record.materialName ?? record.meshName ?? record.effectId}`);
+                }
+                const textureValidation = validateTextureToonApplyRecord(record);
+                warnings.push(...textureValidation.warnings);
+            } else if (record.plannedFallback.preset !== "basicToon") {
+                warnings.push(`Only basicToon and guarded textureToon fallback apply are enabled in this step: ${record.materialName ?? record.meshName ?? record.effectId}`);
             }
             if (record.plannedFallback.factoryStatus === "unsupported" || record.plannedFallback.factoryStatus === "failed") {
                 warnings.push(`Fallback factory dry-run did not succeed for apply target: ${record.materialName ?? record.meshName ?? record.effectId}`);
@@ -925,10 +964,20 @@ export class MmeFallbackController {
     }
 
     private disposeFactoryAllocations(
-        allocations: ReadonlyArray<{ result: MmeFallbackMaterialFactoryResult }>,
+        allocations: ReadonlyArray<{
+            readonly result: MmeFallbackMaterialFactoryResult;
+            readonly createdTextures?: readonly MmeFallbackAppliedTextureRecord[];
+        }>,
     ): void {
         for (const allocation of allocations) {
+            this.disposeApplyTextureRecords(allocation.createdTextures ?? []);
             disposeMmeFallbackMaterial(allocation.result);
+        }
+    }
+
+    private disposeApplyTextureRecords(records: readonly MmeFallbackAppliedTextureRecord[]): void {
+        for (const record of records) {
+            record.texture.dispose();
         }
     }
 }
@@ -942,6 +991,88 @@ function buildTextureReadinessMetadata(
         toonRamp: validateMmeTextureCandidate(analysis.mappedFields.toonRamp, context),
         sphereMap: validateMmeTextureCandidate(analysis.mappedFields.sphereMap, context),
     };
+}
+
+function validateTextureToonApplyRecord(record: MmeFallbackApplyTargetRecord): {
+    readonly warnings: readonly string[];
+} {
+    const warnings: string[] = [];
+    const textureOwnershipRecords = buildTextureOwnershipRecords(record.plannedFallback, warnings);
+    const diffuseRecord = textureOwnershipRecords.find((entry) => entry.role === "diffuseTexture") ?? null;
+
+    if (record.plannedFallback.textureReadiness.diffuseTexture.status !== "valid") {
+        warnings.push(`textureToon diffuse texture is not apply-ready: ${record.plannedFallback.textureReadiness.diffuseTexture.reason}`);
+    }
+    if (!diffuseRecord) {
+        warnings.push(`textureToon apply requires exactly one valid resolved diffuse texture: ${record.materialName ?? record.meshName ?? record.effectId}`);
+    }
+    if (textureOwnershipRecords.length !== 1 || textureOwnershipRecords[0]?.role !== "diffuseTexture") {
+        warnings.push(`textureToon apply is limited to one diffuse texture and does not apply toon ramps or sphere maps: ${record.materialName ?? record.meshName ?? record.effectId}`);
+    }
+
+    return {
+        warnings,
+    };
+}
+
+function createApplyTexturesForRecord(
+    record: MmeFallbackApplyTargetRecord,
+    material: Material,
+    scene: Scene,
+): {
+    readonly status: "created" | "failed";
+    readonly reason: string;
+    readonly createdTextures: readonly MmeFallbackAppliedTextureRecord[];
+    readonly warnings: readonly string[];
+} {
+    if (record.plannedFallback.preset !== "textureToon") {
+        return {
+            status: "created",
+            reason: "no-texture-required",
+            createdTextures: [],
+            warnings: [],
+        };
+    }
+
+    const readiness = record.plannedFallback.textureReadiness.diffuseTexture;
+    if (readiness.status !== "valid" || !readiness.resolvedPath) {
+        return {
+            status: "failed",
+            reason: "texture-readiness-invalid",
+            createdTextures: [],
+            warnings: [`textureToon diffuse texture is not apply-ready: ${readiness.reason}`],
+        };
+    }
+
+    let texture: Texture | null = null;
+    try {
+        texture = new Texture(readiness.resolvedPath, scene, false, true);
+        (material as Material & { diffuseTexture?: Texture | null }).diffuseTexture = texture;
+        return {
+            status: "created",
+            reason: "texture-created",
+            createdTextures: [
+                {
+                    role: "diffuseTexture",
+                    reference: readiness.reference,
+                    resolvedPath: readiness.resolvedPath,
+                    texture,
+                    textureOwnership: "controller",
+                    disposeTextureOnRevert: true,
+                    disposeTextureOnFailure: true,
+                },
+            ],
+            warnings: [...readiness.warnings],
+        };
+    } catch (error) {
+        texture?.dispose();
+        return {
+            status: "failed",
+            reason: "texture-create-failed",
+            createdTextures: [],
+            warnings: [error instanceof Error ? error.message : "Failed to create textureToon fallback texture"],
+        };
+    }
 }
 
 function buildTextureTransactionTargetRecord(

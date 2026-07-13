@@ -41,8 +41,9 @@ export function createMmeFallbackMaterial(params: {
         };
     }
 
-    if (params.plan.missingFields.length > 0) {
-        warnings.push(`Missing required fields: ${params.plan.missingFields.join(", ")}`);
+    const blockingMissingFields = getBlockingMissingFieldsForMaterialCreation(params.plan, params.analysis);
+    if (blockingMissingFields.length > 0) {
+        warnings.push(`Missing required fields: ${blockingMissingFields.join(", ")}`);
         return {
             status: "skipped",
             preset: params.plan.preset,
@@ -147,6 +148,21 @@ function isFactoryResult(
     value: MmeFallbackMaterialFactoryResult | Material,
 ): value is MmeFallbackMaterialFactoryResult {
     return "status" in value && "materialType" in value;
+}
+
+function getBlockingMissingFieldsForMaterialCreation(
+    plan: MmeFallbackPlan,
+    analysis: MmeEffectAnalysis,
+): readonly string[] {
+    if (plan.preset !== "textureToon") {
+        return plan.missingFields;
+    }
+
+    if (analysis.mappedFields.diffuseTexture?.resolvedPath) {
+        return plan.missingFields.filter((field) => field !== "toonRamp");
+    }
+
+    return plan.missingFields;
 }
 
 function buildFallbackMaterialName(
